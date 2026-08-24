@@ -17,7 +17,19 @@ export class OpenAIResponsesProvider implements TranslationProvider {
 
   constructor() {
     const env = getServerEnv();
-    this.client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+    const useOpenRouter = env.AI_PROVIDER === "openrouter";
+    this.client = new OpenAI({
+      apiKey: useOpenRouter ? env.OPENROUTER_API_KEY : env.OPENAI_API_KEY,
+      ...(useOpenRouter
+        ? {
+            baseURL: "https://openrouter.ai/api/v1",
+            defaultHeaders: {
+              "HTTP-Referer": env.APP_URL,
+              "X-OpenRouter-Title": "English Arabic Translate AI",
+            },
+          }
+        : {}),
+    });
     this.translationModel = env.OPENAI_MODEL_TRANSLATION;
     this.ocrModel = env.OPENAI_MODEL_OCR;
   }

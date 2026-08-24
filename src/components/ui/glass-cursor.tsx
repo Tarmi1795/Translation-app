@@ -23,10 +23,10 @@ function distance(a: Point, b: Point) {
 
 /**
  * A clean-room glass cursor inspired by the supplied reference.
- * It keeps a crisp black arrow at the pointer hotspot while a tapered,
+ * It keeps a crisp black arrow at the pointer hotspot while a thick, layered
  * cyan-white refractive ribbon follows fast movement and collapses at rest.
  */
-export function GlassCursor({ className, trailLength = 16, dampening = 0.34 }: GlassCursorProps) {
+export function GlassCursor({ className, trailLength = 20, dampening = 0.31 }: GlassCursorProps) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const cursorRef = React.useRef<HTMLDivElement>(null);
   const pulseRef = React.useRef<HTMLSpanElement>(null);
@@ -84,36 +84,92 @@ export function GlassCursor({ className, trailLength = 16, dampening = 0.34 }: G
       const styles = getComputedStyle(root);
       const glow = styles.getPropertyValue("--glass-cursor-glow-rgb").trim() || "83 197 238";
       const ice = styles.getPropertyValue("--glass-cursor-ice-rgb").trim() || "226 248 255";
-      canvas.style.opacity = String(Math.min(0.86, motionEnergy * 0.9));
+      const core = styles.getPropertyValue("--glass-cursor-core").trim() || "#02080d";
+      const energy = Math.min(1, motionEnergy);
+      canvas.style.opacity = String(Math.min(0.94, 0.12 + energy * 0.92));
       context.lineCap = "round";
       context.lineJoin = "round";
-      context.globalCompositeOperation = "lighter";
 
       for (let index = points.length - 2; index >= 0; index -= 1) {
         const from = points[index + 1];
         const to = points[index];
         const progress = 1 - index / (points.length - 1);
-        const alpha = Math.pow(progress, 1.7) * Math.min(1, motionEnergy);
+        const alpha = Math.pow(progress, 1.42) * energy;
+        const segmentLength = Math.max(0.001, distance(from, to));
+        const normalX = -(to.y - from.y) / segmentLength;
+        const normalY = (to.x - from.x) / segmentLength;
+        const swell = 0.76 + energy * 0.36;
 
+        // A translucent dark membrane gives the trail visible volume, while
+        // the following offset layers read like reflected light in moving water.
+        context.globalCompositeOperation = "source-over";
+        context.globalAlpha = alpha * 0.22;
         context.beginPath();
         context.moveTo(from.x, from.y);
         context.lineTo(to.x, to.y);
-        context.lineWidth = 2.5 + progress * 9;
-        context.strokeStyle = `rgb(${glow} / ${alpha * 0.17})`;
-        context.shadowColor = `rgb(${glow} / ${alpha * 0.9})`;
-        context.shadowBlur = 11 + progress * 17;
+        context.lineWidth = (7 + progress * 19) * swell;
+        context.strokeStyle = core;
+        context.shadowColor = `rgb(${glow} / ${alpha * 0.62})`;
+        context.shadowBlur = 10 + progress * 20;
         context.stroke();
 
+        context.globalAlpha = 1;
+        context.globalCompositeOperation = "lighter";
         context.beginPath();
         context.moveTo(from.x, from.y);
         context.lineTo(to.x, to.y);
-        context.lineWidth = 0.7 + progress * 2.4;
-        context.strokeStyle = `rgb(${ice} / ${alpha * 0.42})`;
-        context.shadowBlur = 5 + progress * 8;
+        context.lineWidth = (5.5 + progress * 16) * swell;
+        context.strokeStyle = `rgb(${glow} / ${alpha * 0.2})`;
+        context.shadowColor = `rgb(${glow} / ${alpha * 0.96})`;
+        context.shadowBlur = 14 + progress * 23;
         context.stroke();
+
+        // Offset the inner band toward one edge to mimic a refracted rim.
+        context.beginPath();
+        context.moveTo(from.x + normalX * 0.8, from.y + normalY * 0.8);
+        context.lineTo(to.x + normalX * 0.8, to.y + normalY * 0.8);
+        context.lineWidth = (2.4 + progress * 8.5) * swell;
+        context.strokeStyle = `rgb(${ice} / ${alpha * 0.25})`;
+        context.shadowColor = `rgb(${ice} / ${alpha * 0.78})`;
+        context.shadowBlur = 7 + progress * 12;
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(from.x + normalX * 1.7, from.y + normalY * 1.7);
+        context.lineTo(to.x + normalX * 1.7, to.y + normalY * 1.7);
+        context.lineWidth = 0.9 + progress * 3.6;
+        context.strokeStyle = `rgb(${ice} / ${alpha * 0.58})`;
+        context.shadowBlur = 3 + progress * 6;
+        context.stroke();
+
+        // Small deterministic beads break up the ribbon edge during quicker
+        // movement, giving it a liquid surface without adding random jitter.
+        if (energy > 0.24 && index % 4 === 1 && progress < 0.78) {
+          const side = index % 8 === 1 ? 1 : -1;
+          const radius = (1.2 + progress * 3.1) * energy;
+          const beadX = to.x + normalX * side * (4 + progress * 4.5);
+          const beadY = to.y + normalY * side * (4 + progress * 4.5);
+          const bead = context.createRadialGradient(
+            beadX - radius * 0.35,
+            beadY - radius * 0.35,
+            0,
+            beadX,
+            beadY,
+            radius,
+          );
+          bead.addColorStop(0, `rgb(${ice} / ${alpha * 0.62})`);
+          bead.addColorStop(0.45, `rgb(${glow} / ${alpha * 0.2})`);
+          bead.addColorStop(1, `rgb(${glow} / 0)`);
+          context.fillStyle = bead;
+          context.shadowBlur = 8;
+          context.beginPath();
+          context.arc(beadX, beadY, radius, 0, Math.PI * 2);
+          context.fill();
+        }
       }
 
       context.globalCompositeOperation = "source-over";
+      context.globalAlpha = 1;
       context.shadowBlur = 0;
     };
 

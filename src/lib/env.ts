@@ -4,12 +4,23 @@ const serverSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(10),
   SUPABASE_SECRET_KEY: z.string().min(10),
-  OPENAI_API_KEY: z.string().min(10),
+  AI_PROVIDER: z.enum(["openai", "openrouter"]).default("openai"),
+  OPENAI_API_KEY: z.string().min(10).optional(),
+  OPENROUTER_API_KEY: z.string().min(10).optional(),
   OPENAI_MODEL_TRANSLATION: z.string().default("gpt-5.6-terra"),
   OPENAI_MODEL_OCR: z.string().default("gpt-5.6-terra"),
   APP_URL: z.string().url().default("http://localhost:3000"),
   PLATFORM_ADMIN_EMAILS: z.string().default(""),
   RATE_LIMIT_SALT: z.string().min(32).optional(),
+}).superRefine((env, context) => {
+  const requiredKey = env.AI_PROVIDER === "openrouter" ? env.OPENROUTER_API_KEY : env.OPENAI_API_KEY;
+  if (!requiredKey) {
+    context.addIssue({
+      code: "custom",
+      path: [env.AI_PROVIDER === "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY"],
+      message: `A server-side ${env.AI_PROVIDER} API key is required.`,
+    });
+  }
 });
 
 export function hasSupabaseEnv() {
