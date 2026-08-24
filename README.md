@@ -101,7 +101,7 @@ Approved user corrections remain private to their workspace. Consent alone does 
 
 ## Deploy to the Vercel domain
 
-The project targets Node.js 22 and Vercel region `dxb1` through `vercel.json`. Create/link a Vercel project, add the environment variables, and deploy:
+The project targets Node.js 22 and Vercel region `bom1` through `vercel.json`. Create/link a Vercel project, add the environment variables, and deploy:
 
 ```powershell
 npx vercel link
