@@ -1,0 +1,6 @@
+import { consentSchema } from "@/lib/api/schemas";
+import { requireWorkspaceRole } from "@/lib/auth";
+import { apiData, apiError } from "@/lib/http";
+import { createClient } from "@/lib/supabase/server";
+export async function GET(request: Request) { try { const workspaceId = new URL(request.url).searchParams.get("workspace_id")!; await requireWorkspaceRole(workspaceId); const supabase = await createClient(); const { data, error } = await supabase.from("training_consents").select("global_learning,updated_at,updated_by").eq("workspace_id", workspaceId).single(); if (error) throw error; return apiData(data); } catch (error) { return apiError(error); } }
+export async function PUT(request: Request) { try { const input = consentSchema.parse(await request.json()); const { user } = await requireWorkspaceRole(input.workspaceId, ["owner", "admin"]); const supabase = await createClient(); const { data, error } = await supabase.from("training_consents").update({ global_learning: input.globalLearning, updated_by: user.id, updated_at: new Date().toISOString() }).eq("workspace_id", input.workspaceId).select("global_learning,updated_at").single(); if (error) throw error; return apiData(data); } catch (error) { return apiError(error); } }

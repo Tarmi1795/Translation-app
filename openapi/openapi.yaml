@@ -1,0 +1,301 @@
+openapi: 3.1.0
+info:
+  title: English Arabic Translate AI API
+  version: 0.1.0-beta
+  description: Versioned API for the web beta and future native clients. All tenant resources require an authenticated Supabase session.
+servers:
+  - url: /api/v1
+security:
+  - cookieAuth: []
+tags:
+  - name: Projects
+  - name: Documents
+  - name: Translation
+  - name: Review
+  - name: Workspaces
+  - name: Credits
+paths:
+  /projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { $ref: '#/components/responses/ProjectList' }
+    post:
+      tags: [Projects]
+      summary: Create a project
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateProject' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectEnvelope' } } } }
+  /projects/{projectId}:
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+    get:
+      tags: [Projects]
+      summary: Get a project
+      responses: { '200': { description: Project } }
+    delete:
+      tags: [Projects]
+      summary: Permanently delete a project and its private objects
+      responses: { '200': { description: Deleted } }
+  /uploads:
+    post:
+      tags: [Documents]
+      summary: Create a signed source upload
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateUpload' } } }
+      responses: { '201': { description: Signed upload created } }
+  /uploads/{documentId}/finalize:
+    post:
+      tags: [Documents]
+      summary: Validate a completed upload
+      parameters: [{ $ref: '#/components/parameters/DocumentId' }]
+      responses: { '200': { description: Validated } }
+  /estimates:
+    post:
+      tags: [Documents]
+      summary: Extract or OCR a source and calculate exact source-word credits
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EstimateRequest' } } }
+      responses:
+        '200': { description: Estimate, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Estimate' } } } } } }
+  /translations:
+    post:
+      tags: [Translation]
+      summary: Reserve credits and start a durable translation workflow
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/StartTranslation' } } }
+      responses:
+        '202': { description: Started }
+        '402': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /translations/{jobId}:
+    patch:
+      tags: [Translation]
+      summary: Cancel or retry a translation job
+      parameters: [{ $ref: '#/components/parameters/JobId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [action], properties: { action: { type: string, enum: [cancel, retry_failed] } } } } }
+      responses: { '200': { description: Action accepted } }
+  /jobs/{jobId}:
+    get:
+      tags: [Translation]
+      summary: Retrieve job progress, warnings, and errors
+      parameters: [{ $ref: '#/components/parameters/JobId' }]
+      responses:
+        '200': { description: Job progress, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/JobProgress' } } } } } }
+  /segments/{segmentId}:
+    patch:
+      tags: [Translation]
+      summary: Edit source OCR or translated text
+      parameters: [{ $ref: '#/components/parameters/SegmentId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EditSegment' } } }
+      responses: { '200': { description: Saved } }
+  /segments/{segmentId}/revisions:
+    get:
+      tags: [Translation]
+      summary: Retrieve revision history
+      parameters: [{ $ref: '#/components/parameters/SegmentId' }]
+      responses: { '200': { description: Revision list } }
+  /reviews:
+    post:
+      tags: [Review]
+      summary: Submit, request changes, or approve
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReviewAction' } } }
+      responses: { '200': { description: Review state changed }, '409': { $ref: '#/components/responses/Error' } }
+  /exports:
+    post:
+      tags: [Documents]
+      summary: Generate DOCX, PDF, or text output
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ExportRequest' } } }
+      responses: { '201': { description: Export ready } }
+  /exports/{exportId}/download:
+    get:
+      tags: [Documents]
+      summary: Download a private export
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses: { '200': { description: Export bytes } }
+  /workspaces:
+    get:
+      tags: [Workspaces]
+      summary: List personal and organization workspaces
+      responses: { '200': { description: Workspace list } }
+    post:
+      tags: [Workspaces]
+      summary: Create an organization workspace
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 2, maxLength: 120 } } } } } }
+      responses: { '201': { description: Created } }
+  /workspaces/{workspaceId}/invites:
+    post:
+      tags: [Workspaces]
+      summary: Invite a member
+      parameters: [{ $ref: '#/components/parameters/WorkspaceIdPath' }]
+      responses: { '201': { description: Invitation created } }
+  /workspaces/{workspaceId}/glossary:
+    get:
+      tags: [Workspaces]
+      summary: List glossary terms
+      parameters: [{ $ref: '#/components/parameters/WorkspaceIdPath' }]
+      responses: { '200': { description: Term list } }
+    post:
+      tags: [Workspaces]
+      summary: Add a glossary term
+      parameters: [{ $ref: '#/components/parameters/WorkspaceIdPath' }]
+      responses: { '201': { description: Created } }
+  /credits:
+    get:
+      tags: [Credits]
+      summary: Retrieve balance and ledger
+      parameters: [{ $ref: '#/components/parameters/WorkspaceId' }]
+      responses: { '200': { description: Credit account and ledger } }
+  /consent:
+    get:
+      tags: [Workspaces]
+      summary: Retrieve global-learning consent
+      parameters: [{ $ref: '#/components/parameters/WorkspaceId' }]
+      responses: { '200': { description: Consent } }
+    put:
+      tags: [Workspaces]
+      summary: Update global-learning consent
+      responses: { '200': { description: Updated } }
+components:
+  securitySchemes:
+    cookieAuth: { type: apiKey, in: cookie, name: sb-access-token }
+  parameters:
+    WorkspaceId: { name: workspace_id, in: query, required: true, schema: { type: string, format: uuid } }
+    WorkspaceIdPath: { name: workspaceId, in: path, required: true, schema: { type: string, format: uuid } }
+    ProjectId: { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+    DocumentId: { name: documentId, in: path, required: true, schema: { type: string, format: uuid } }
+    JobId: { name: jobId, in: path, required: true, schema: { type: string, format: uuid } }
+    SegmentId: { name: segmentId, in: path, required: true, schema: { type: string, format: uuid } }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    PageSize: { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+  responses:
+    Error:
+      description: Request error
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    ProjectList: { description: Project list }
+  schemas:
+    WorkspaceRole: { type: string, enum: [owner, admin, translator, reviewer] }
+    LanguageDirection: { type: string, enum: [en-ar, ar-en] }
+    ProjectState: { type: string, enum: [draft, estimating, ready, translating, review, approved, failed, cancelled] }
+    JobStage: { type: string, enum: [queued, validating, extracting, ocr_review, reserving_credits, retrieving_context, translating, quality_check, reconstructing, completed, failed, cancelled] }
+    Project:
+      type: object
+      required: [id, workspaceId, title, direction, state, sourceWordCount]
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        title: { type: string }
+        direction: { $ref: '#/components/schemas/LanguageDirection' }
+        state: { $ref: '#/components/schemas/ProjectState' }
+        sourceWordCount: { type: integer, minimum: 0 }
+    ProjectEnvelope: { type: object, properties: { data: { $ref: '#/components/schemas/Project' } } }
+    CreateProject:
+      type: object
+      required: [workspaceId, title, direction]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 240 }
+        direction: { $ref: '#/components/schemas/LanguageDirection' }
+    CreateUpload:
+      type: object
+      required: [workspaceId, projectId, fileName, mimeType, size]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        fileName: { type: string }
+        mimeType: { type: string }
+        size: { type: integer, maximum: 52428800 }
+    EstimateRequest:
+      type: object
+      required: [workspaceId, projectId, direction]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        documentId: { type: string, format: uuid }
+        text: { type: string }
+        direction: { $ref: '#/components/schemas/LanguageDirection' }
+    Estimate:
+      type: object
+      required: [projectId, documentId, versionId, sourceWordCount, pageCount, requiresOcrReview]
+      properties:
+        projectId: { type: string, format: uuid }
+        documentId: { type: string, format: uuid }
+        versionId: { type: string, format: uuid }
+        sourceWordCount: { type: integer }
+        pageCount: { type: integer }
+        requiresOcrReview: { type: boolean }
+    StartTranslation:
+      type: object
+      required: [workspaceId, projectId]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+    JobProgress:
+      type: object
+      required: [id, stage, progress, completedSegments, totalSegments]
+      properties:
+        id: { type: string, format: uuid }
+        stage: { $ref: '#/components/schemas/JobStage' }
+        progress: { type: number, minimum: 0, maximum: 100 }
+        completedSegments: { type: integer }
+        totalSegments: { type: integer }
+        errorCode: { type: [string, 'null'] }
+        errorMessage: { type: [string, 'null'] }
+    EditSegment:
+      type: object
+      properties:
+        sourceText: { type: string }
+        translatedText: { type: string }
+        reason: { type: string }
+    ReviewAction:
+      type: object
+      required: [workspaceId, projectId, action]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        action: { type: string, enum: [submit, request_changes, approve] }
+        ownerOverride: { type: boolean, default: false }
+        reason: { type: string }
+    ExportRequest:
+      type: object
+      required: [workspaceId, projectId, format]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        format: { type: string, enum: [docx, pdf, txt] }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }

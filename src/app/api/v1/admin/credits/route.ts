@@ -1,0 +1,5 @@
+import { adminGrantSchema } from "@/lib/api/schemas";
+import { requirePlatformAdmin } from "@/lib/auth";
+import { apiData, apiError } from "@/lib/http";
+import { createAdminClient } from "@/lib/supabase/server";
+export async function POST(request: Request) { try { const actor = await requirePlatformAdmin(); const input = adminGrantSchema.parse(await request.json()); const admin = createAdminClient(); const { data: workspace, error: workspaceError } = await admin.from("workspaces").select("owner_id").eq("id", input.workspaceId).single(); if (workspaceError || !workspace) throw workspaceError ?? new Error("Workspace not found."); const { data, error } = await admin.rpc("grant_admin_credits", { p_workspace_id: input.workspaceId, p_target_user_id: workspace.owner_id, p_amount: input.amount, p_reason: input.reason, p_actor_id: actor.id }); if (error) throw error; const result = Array.isArray(data) ? data[0] : data; return apiData({ grantId: result.grant_id, ledgerId: result.ledger_id, balanceAfter: result.balance_after }, { status: 201 }); } catch (error) { return apiError(error); } }

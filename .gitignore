@@ -1,0 +1,17 @@
+node_modules/
+.next/
+.vercel/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+!.env.example
+.DS_Store
+*.tsbuildinfo
+/.swc
+/supabase/.temp/
+/supabase/.branches/
+
+# Local prototype archive retained outside version control.
+/Unnamed Translation appi.zip
