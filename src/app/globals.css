@@ -50,10 +50,7 @@
   --glass-cursor-core: #02080d;
   --glass-cursor-edge: #bdeaff;
   --glass-cursor-highlight: #f5fcff;
-  --glass-cursor-ice: #e2f8ff;
   --glass-cursor-glow: #53c5ee;
-  --glass-cursor-glow-rgb: 83 197 238;
-  --glass-cursor-ice-rgb: 226 248 255;
 }
 
 .dark {
@@ -101,10 +98,7 @@
   --glass-cursor-core: #01060a;
   --glass-cursor-edge: #d3f3ff;
   --glass-cursor-highlight: #ffffff;
-  --glass-cursor-ice: #e8faff;
   --glass-cursor-glow: #63cdf4;
-  --glass-cursor-glow-rgb: 99 205 244;
-  --glass-cursor-ice-rgb: 232 250 255;
 }
 
 * {
