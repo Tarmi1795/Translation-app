@@ -6,12 +6,12 @@ import { Building2, LoaderCircle, Mail } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
 import { hasSupabaseEnv } from "@/lib/env";
 import { Button } from "@/components/ui/button";
+import { getSafeInternalPath } from "@/lib/auth-redirect";
 
 export function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const requestedNext = searchParams.get("next") ?? "/app";
-  const next = requestedNext.startsWith("/") && !requestedNext.startsWith("//") ? requestedNext : "/app";
+  const next = getSafeInternalPath(searchParams.get("next"));
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);

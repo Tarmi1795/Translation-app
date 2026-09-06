@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { ApiError } from "@/lib/auth";
 import { hasSupabaseEnv, isPlatformAdminEmail } from "@/lib/env";
 import { getWorkspaceContext } from "@/lib/workspace-context";
 import { createClient } from "@/lib/supabase/server";
@@ -22,8 +23,14 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
   let context;
   try {
     context = await getWorkspaceContext();
-  } catch {
-    redirect("/auth/sign-in");
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      redirect("/auth/sign-in?next=/app");
+    }
+    // A workspace or database failure is not an authentication failure. Let
+    // the route error boundary report it instead of bouncing a signed-in user
+    // through sign-in and back to the landing page.
+    throw error;
   }
   const { user, workspaces, activeWorkspace } = context;
   const supabase = await createClient();
