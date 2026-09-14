@@ -131,7 +131,12 @@ export async function translationWorkflow(jobId: string) {
     await finalizeDocument(jobId, payload, successfulWords);
     return { status: "completed" as const, successfulWords };
   } catch (error) {
-    await failWorkflow(jobId, error instanceof Error ? error.message : "Translation workflow failed.", false, successfulWords);
+    // Workflow steps cross a serialization boundary; their errors are not
+    // necessarily instances of the workflow sandbox's Error constructor.
+    const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
+      ? error.message
+      : "Translation workflow failed.";
+    await failWorkflow(jobId, message, false, successfulWords);
     throw error;
   }
 }
