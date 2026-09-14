@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Camera, CheckCircle2, FileText, Image as ImageIcon, Languages, LoaderCircle, ScanText, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { BrandingPicker } from "@/components/branding-picker";
 import { cn, formatNumber } from "@/lib/utils";
-import type { LanguageDirection } from "@/types/domain";
+import type { BrandingSelection, LanguageDirection } from "@/types/domain";
 
 type InputMode = "text" | "document" | "scan" | "camera";
 
@@ -19,6 +20,8 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [branding, setBranding] = useState<BrandingSelection[]>([]);
+  const [versionId, setVersionId] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<number | null>(null);
   const [requiresOcrReview, setRequiresOcrReview] = useState(false);
   const [busy, setBusy] = useState<"estimating" | "starting" | null>(null);
@@ -60,12 +63,20 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
         documentId = upload.documentId;
       }
 
-      const result = await api<{ sourceWordCount: number; requiresOcrReview: boolean }>("/api/v1/estimates", {
+      const result = await api<{ versionId: string; sourceWordCount: number; requiresOcrReview: boolean }>("/api/v1/estimates", {
         method: "POST",
-        body: JSON.stringify({ workspaceId, projectId: project.id, documentId, text: mode === "text" ? text : undefined, direction }),
+        body: JSON.stringify({ workspaceId, projectId: project.id, documentId, text: mode === "text" ? text : undefined, direction, branding }),
       });
       setEstimate(result.sourceWordCount);
       setRequiresOcrReview(result.requiresOcrReview);
+      setVersionId(result.versionId);
+      if (result.requiresOcrReview) {
+        router.push(`/app/projects/${project.id}`);
+      } else if (result.sourceWordCount <= availableCredits) {
+        setBusy("starting");
+        const started = await api<{ jobId: string }>("/api/v1/translations", { method: "POST", body: JSON.stringify({ workspaceId, projectId: project.id }) });
+        router.push(`/app/projects/${project.id}?job=${started.jobId}`);
+      } else setError("This document needs more credits than are available. The extracted source is saved; request a credit grant, then continue.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The estimate could not be completed.");
     } finally {
@@ -78,6 +89,7 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
     setBusy("starting");
     setError(null);
     try {
+      if (versionId) await api(`/api/v1/projects/${projectId}/branding`, { method: "PATCH", body: JSON.stringify({ workspaceId, versionId, branding }) });
       const result = await api<{ jobId: string }>("/api/v1/translations", { method: "POST", body: JSON.stringify({ workspaceId, projectId }) });
       router.push(`/app/projects/${projectId}?job=${result.jobId}`);
     } catch (reason) {
@@ -87,6 +99,8 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
   }
 
   function chooseMode(next: InputMode) {
+    setProjectId(null);
+    setVersionId(null);
     setMode(next);
     setEstimate(null);
     setRequiresOcrReview(false);
@@ -109,17 +123,18 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
 
   return (
     <div>
-      <div className="max-w-3xl"><div className="flex items-center gap-2 text-sm font-semibold text-[var(--accent)]"><span className="status-dot size-1.5 rounded-full bg-[var(--success)]" />New project</div><h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Translate a document</h1><p className="mt-3 leading-7 text-[var(--muted)]">We’ll inspect the source first, calculate the exact word requirement, and ask you to review uncertain OCR before translation.</p></div>
+      <div className="max-w-3xl"><div className="flex items-center gap-2 text-sm font-semibold text-[var(--accent)]"><span className="status-dot size-1.5 rounded-full bg-[var(--success)]" />New document</div><h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Translate a document</h1><p className="mt-3 leading-7 text-[var(--muted)]">Add your document, choose its target language and reuse your branding. We’ll inspect and translate automatically, pausing if text needs your attention. Uses up to your available {formatNumber(availableCredits)} word credits.</p></div>
       <ol className="mt-7 grid max-w-3xl grid-cols-3 overflow-hidden rounded-xl border bg-[var(--surface)] shadow-sm" aria-label="Translation steps">
-        {["Add source", "Inspect", "Translate"].map((step, index) => {
+        {["Document & branding", "Translate", "Review & download"].map((step, index) => {
           const active = index <= currentStep;
           return <li key={step} aria-current={index === currentStep ? "step" : undefined} className={cn("flex min-h-12 items-center gap-2 border-e px-3 text-xs font-bold last:border-e-0 sm:px-4 sm:text-sm", active ? "text-[var(--accent)]" : "text-[var(--muted)]")}><span className={cn("grid size-6 shrink-0 place-items-center rounded-full text-[11px] tabular-nums", active ? "bg-[var(--accent-soft)]" : "bg-[var(--subtle)]")}>{index + 1}</span><span className="truncate">{step}</span></li>;
         })}
       </ol>
       <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_340px]">
         <Card className="overflow-hidden p-5 sm:p-7">
+          <fieldset disabled={Boolean(busy)} className="min-w-0">
           <fieldset>
-            <legend className="text-sm font-bold">Translation direction</legend>
+            <legend className="text-sm font-bold">Target language</legend>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {(["en-ar", "ar-en"] as const).map((value) => (
                 <button key={value} type="button" onClick={() => { setDirection(value); setEstimate(null); setRequiresOcrReview(false); setProjectId(null); }} aria-pressed={direction === value} className={cn("interactive-surface flex min-h-16 items-center justify-between rounded-xl border px-4 text-start font-semibold", direction === value ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] shadow-sm" : "bg-[var(--surface)] hover:bg-[var(--subtle)]")}>
@@ -165,15 +180,14 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
           )}
 
           {requiresOcrReview && projectId && <div role="status" className="mt-5 flex flex-col justify-between gap-3 rounded-xl border border-[color:color-mix(in_srgb,var(--warning)_35%,var(--border))] bg-[color:color-mix(in_srgb,var(--warning)_8%,var(--surface))] p-4 text-sm sm:flex-row sm:items-center"><p className="text-[var(--warning)]">Low-confidence OCR must be corrected before translation.</p><Button type="button" variant="secondary" size="sm" onClick={() => router.push(`/app/projects/${projectId}`)}>Review OCR</Button></div>}
+          {workspaceId && <BrandingPicker workspaceId={workspaceId} value={branding} onChange={setBranding} disabled={Boolean(busy)} />}
           {error && <p role="alert" className="page-enter mt-5 rounded-xl border border-[color:color-mix(in_srgb,var(--danger)_30%,var(--border))] bg-[color:color-mix(in_srgb,var(--danger)_8%,var(--surface))] p-4 text-sm text-[var(--danger)]">{error}</p>}
           <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-            <Button type="button" variant="secondary" onClick={estimateTranslation} disabled={!configured || !workspaceId || !inputReady || Boolean(busy)}>
-              {busy === "estimating" && <LoaderCircle aria-hidden="true" size={18} className="animate-spin" />} Inspect & estimate
-            </Button>
-            <Button type="button" onClick={startTranslation} disabled={estimate === null || estimate > availableCredits || requiresOcrReview || Boolean(busy)}>
-              {busy === "starting" && <LoaderCircle aria-hidden="true" size={18} className="animate-spin" />} Start translation <ArrowRight aria-hidden="true" size={17} className="rtl:rotate-180" />
+            <Button type="button" onClick={estimate === null ? estimateTranslation : startTranslation} disabled={!configured || !workspaceId || !inputReady || requiresOcrReview || Boolean(busy) || (estimate !== null && estimate > availableCredits)}>
+              {busy && <LoaderCircle aria-hidden="true" size={18} className="animate-spin" />} {busy === "estimating" ? "Inspecting document…" : busy === "starting" ? "Starting translation…" : estimate === null ? "Translate document" : "Continue translation"} <ArrowRight aria-hidden="true" size={17} className="rtl:rotate-180" />
             </Button>
           </div>
+          </fieldset>
         </Card>
 
         <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start" aria-label="Translation estimate">

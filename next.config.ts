@@ -4,6 +4,7 @@ import { withWorkflow } from "workflow/next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   typedRoutes: true,
+  outputFileTracingIncludes: { "/api/v1/exports": ["./public/fonts/*.ttf"] },
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",

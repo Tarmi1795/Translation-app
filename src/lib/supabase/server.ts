@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { getPublicEnv, getServerEnv } from "@/lib/env";
+import { getPublicEnv } from "@/lib/env";
 
 export async function createClient() {
   const cookieStore = await cookies();
@@ -26,8 +26,10 @@ export async function createClient() {
 }
 
 export function createAdminClient() {
-  const { NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY } = getServerEnv();
-  return createSupabaseClient(NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY, {
+  const { url } = getPublicEnv();
+  const secret = process.env.SUPABASE_SECRET_KEY;
+  if (!secret) throw new Error("The Supabase server key is not configured.");
+  return createSupabaseClient(url, secret, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }

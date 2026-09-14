@@ -2,7 +2,7 @@ import { ApiError, requireUser } from "@/lib/auth";
 import { apiError } from "@/lib/http";
 import { createClient } from "@/lib/supabase/server";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await requireUser();
     const { id } = await params;
@@ -13,6 +13,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     if (error) throw error;
     const project = Array.isArray(row.project) ? row.project[0] : row.project;
     const fileName = `${project?.title ?? "translation"}.${row.format}`.replace(/["\r\n]/g, "");
-    return new Response(blob, { headers: { "Content-Type": row.mime_type || "application/octet-stream", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`, "Cache-Control": "private, no-store" } });
+    const disposition = new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment";
+    return new Response(blob, { headers: { "Content-Type": row.mime_type || "application/octet-stream", "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(fileName)}`, "Cache-Control": "private, no-store" } });
   } catch (error) { return apiError(error); }
 }

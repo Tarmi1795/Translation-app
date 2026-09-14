@@ -48,6 +48,7 @@ export function AppShell({
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const currentPage = navigation.find(({ href }) => href === "/app" ? pathname === href : pathname.startsWith(href))?.label ?? (pathname.startsWith("/app/admin") ? "Beta administration" : "Workspace");
   const creditPercent = Math.min(100, Math.max(0, (creditBalance / 5000) * 100));
 
@@ -59,8 +60,10 @@ export function AppShell({
 
   async function selectWorkspace(id: string) {
     const response = await fetch("/api/v1/workspaces/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: id }) });
-    if (!response.ok) return;
+    if (!response.ok) { setWorkspaceError("The workspace could not be changed. Please try again."); return; }
+    setWorkspaceError(null);
     setWorkspaceOpen(false);
+    router.replace("/app");
     router.refresh();
   }
 
@@ -72,6 +75,7 @@ export function AppShell({
       </div>
 
       <div className="relative mx-3 mt-4">
+        {workspaceError && <p role="alert" className="mb-2 text-sm text-[var(--danger)]">{workspaceError}</p>}
         <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">Current workspace</p>
         <button type="button" onClick={() => setWorkspaceOpen((open) => !open)} className="interactive-surface flex min-h-14 w-full items-center gap-3 rounded-xl border bg-[var(--surface)] px-3 text-start" aria-expanded={workspaceOpen} aria-haspopup="listbox">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent)] ring-1 ring-inset ring-[color:color-mix(in_srgb,var(--accent)_16%,transparent)]">{initials(activeWorkspace?.name ?? "Workspace")}</span>

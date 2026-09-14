@@ -1,115 +1,170 @@
 import fontkit from "@pdf-lib/fontkit";
-import { PDFDocument, rgb } from "pdf-lib";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
 import { ArabicShaper } from "arabic-persian-reshaper";
 import bidiFactory from "bidi-js";
-import { rebuildDocx } from "@/lib/documents/docx";
-import type { CanonicalDocument, LanguageDirection } from "@/types/domain";
+import { Document, Packer, Paragraph, TextRun, AlignmentType } from "docx";
+import { rebuildDocx, DOCX_MIME } from "@/lib/documents/docx";
+import { brandDocx, type RenderBranding } from "@/lib/documents/branding-render";
+import { appliesToPage } from "@/lib/branding";
+import { fitText, intersects, wrapText } from "@/lib/documents/layout";
+import type { CanonicalDocument, DocumentNode, LanguageDirection, LayoutWarning } from "@/types/domain";
 
-const FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansarabic/NotoSansArabic%5Bwdth%2Cwght%5D.ttf";
 let fontCache: Uint8Array | null = null;
-
 async function loadArabicFont() {
   if (fontCache) return fontCache;
-  const response = await fetch(FONT_URL, { cache: "force-cache" });
-  if (!response.ok) throw new Error("The Arabic PDF font could not be loaded.");
-  fontCache = new Uint8Array(await response.arrayBuffer());
+  fontCache = new Uint8Array(await readFile(path.join(process.cwd(), "public/fonts/NotoSansArabic.ttf")));
   return fontCache;
 }
-
 function visualRtl(text: string) {
   const shaped = ArabicShaper.convertArabic(text);
   const bidi = bidiFactory();
   return bidi.getReorderedString(shaped, bidi.getEmbeddingLevels(shaped, "rtl"));
 }
-
-function wrapText(text: string, maxWidth: number, size: number, widthOf: (value: string, size: number) => number) {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && widthOf(candidate, size) > maxWidth) { lines.push(line); line = word; }
-    else line = candidate;
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : [""];
+export function assertCompleteTranslation(document: CanonicalDocument) {
+  const missing = document.nodes.filter((node) => node.sourceText.trim() && !node.translatedText?.trim());
+  if (missing.length) throw new Error(`${missing.length} segment(s) still need translation. Complete them before exporting.`);
 }
-
-function fitTextToBox(text: string, maxWidth: number, maxHeight: number, rtl: boolean, widthOf: (value: string, size: number) => number, preferredSize: number) {
-  for (let size = Math.min(16, Math.max(8, preferredSize)); size >= 6; size -= 0.5) {
-    const lines = wrapText(text, maxWidth, size, (value, candidateSize) => widthOf(rtl ? visualRtl(value) : value, candidateSize));
-    const lineHeight = size * 1.35;
-    if (lines.length * lineHeight <= Math.max(maxHeight, lineHeight)) return { size, lineHeight, lines };
+export async function renderPdf(document: CanonicalDocument, direction: LanguageDirection, sourceBytes?: Uint8Array, branding: RenderBranding[] = []) {
+  assertCompleteTranslation(document);
+  const warnings: LayoutWarning[] = [...document.warnings];
+  const preservesSource = Boolean(sourceBytes) && (document.mimeType === "application/pdf" || document.mimeType.startsWith("image/"));
+  const pdf = document.mimeType === "application/pdf" && sourceBytes ? await PDFDocument.load(sourceBytes, { updateMetadata: false }) : await PDFDocument.create();
+  if (document.mimeType.startsWith("image/") && sourceBytes) {
+    const image = document.mimeType === "image/png" ? await pdf.embedPng(sourceBytes) : await pdf.embedJpg(sourceBytes);
+    const size = document.pages?.[0] ?? { width: 595.28, height: 595.28 * image.height / image.width };
+    pdf.addPage([size.width, size.height]).drawImage(image, { x: 0, y: 0, width: size.width, height: size.height });
   }
-  const size = 6;
-  return { size, lineHeight: 8.1, lines: wrapText(text, maxWidth, size, (value, candidateSize) => widthOf(rtl ? visualRtl(value) : value, candidateSize)) };
-}
-
-export async function createPdfExport(document: CanonicalDocument, direction: LanguageDirection, sourceBytes?: Uint8Array) {
-  const preservesSource = document.mimeType === "application/pdf" && Boolean(sourceBytes);
-  const pdf = preservesSource ? await PDFDocument.load(sourceBytes!, { updateMetadata: false }) : await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(await loadArabicFont(), { subset: true });
-  const pageSize: [number, number] = [595.28, 841.89];
-  const margin = 52;
-  const fontSize = 11;
-  const lineHeight = 19;
-  let page = preservesSource ? pdf.getPage(0) : pdf.addPage(pageSize);
-  let y = pageSize[1] - margin;
   const rtl = direction === "en-ar";
+  const visual = (text: string) => rtl ? visualRtl(text) : text;
+  const measure = (text: string, size: number) => font.widthOfTextAtSize(visual(text), size);
+  const defaultSize = document.pages?.[0] ?? { width: 595.28, height: 841.89, margin: 52 };
+  const placed: Array<{ page: number; x: number; y: number; width: number; height: number }> = [];
+  const deferred: DocumentNode[] = [];
+
+  const drawLine = (page: PDFPage, text: string, x: number, top: number, width: number, size: number, alignment?: string) => {
+    const line = visual(text);
+    const textWidth = font.widthOfTextAtSize(line, size);
+    const align = alignment === "center" ? (width - textWidth) / 2 : rtl || alignment === "end" ? width - textWidth : 0;
+    page.drawText(line, { x: x + Math.max(0, align), y: page.getHeight() - top - size, size, font, color: rgb(0.08, 0.1, 0.14) });
+  };
 
   if (preservesSource) {
-    for (const node of document.nodes) {
-      const raw = node.translatedText?.trim();
-      const bounds = node.bounds;
-      if (!raw || !bounds || bounds.page < 1 || bounds.page > pdf.getPageCount()) continue;
-      const sourcePage = pdf.getPage(bounds.page - 1);
-      const { width: pageWidth, height: pageHeight } = sourcePage.getSize();
-      if (bounds.x < 0 || bounds.y < 0 || bounds.x >= pageWidth || bounds.y >= pageHeight) continue;
-      const boxWidth = Math.max(12, Math.min(bounds.width, pageWidth - bounds.x));
-      const boxHeight = Math.max(10, Math.min(Math.max(bounds.height, (node.style?.fontSize ?? 10) * 1.5), pageHeight - bounds.y));
-      const boxY = Math.max(0, pageHeight - bounds.y - boxHeight);
-      sourcePage.drawRectangle({ x: bounds.x, y: boxY, width: boxWidth, height: boxHeight, color: rgb(1, 1, 1), opacity: 0.94 });
-      const fitted = fitTextToBox(raw, boxWidth, boxHeight, rtl, (value, size) => font.widthOfTextAtSize(value, size), node.style?.fontSize ?? 10);
-      fitted.lines.slice(0, Math.max(1, Math.floor(boxHeight / fitted.lineHeight))).forEach((logicalLine, lineIndex) => {
-        const line = rtl ? visualRtl(logicalLine) : logicalLine;
-        const width = font.widthOfTextAtSize(line, fitted.size);
-        sourcePage.drawText(line, {
-          x: rtl ? Math.max(bounds.x, bounds.x + boxWidth - width) : bounds.x,
-          y: boxY + boxHeight - fitted.size - lineIndex * fitted.lineHeight,
-          size: fitted.size,
-          font,
-          color: rgb(0.08, 0.13, 0.22),
-          maxWidth: boxWidth,
-        });
-      });
+    // Erase all source regions before drawing translated text, so neighbouring
+    // source masks cannot erase an earlier translation.
+    for (const node of document.nodes.filter((node) => node.sourceText.trim())) {
+      const b = node.bounds;
+      if (!b || ![b.x,b.y,b.width,b.height].every(Number.isFinite) || b.width <= 0 || b.height <= 0 || b.page < 1 || b.page > pdf.getPageCount()) {
+        deferred.push(node); warnings.push({ code: "material_reflow", page: node.page, nodeId: node.id, severity: "warning", message: "Text has no reliable position. Its complete translation is on a continuation page; the source region is retained." }); continue;
+      }
+      const page = pdf.getPage(b.page - 1);
+      if (page.getRotation().angle !== 0 || b.x < 0 || b.y < 0 || b.x + b.width > page.getWidth() + 1 || b.y + b.height > page.getHeight() + 1) {
+        deferred.push(node); warnings.push({ code: "material_reflow", page: node.page, nodeId: node.id, severity: "warning", message: "Rotated or out-of-page text was moved to a continuation page for safe review." }); continue;
+      }
+      page.drawRectangle({ x: b.x, y: page.getHeight() - b.y - b.height, width: b.width, height: b.height, color: rgb(1,1,1) });
     }
-    return pdf.save();
+    for (const node of document.nodes.filter((node) => node.sourceText.trim() && !deferred.includes(node))) {
+      const b = node.bounds!;
+      // Never enlarge into neighbouring cells or reduce below 9pt.
+      const fitted = fitText(node.translatedText!, b.width, b.height, node.style?.fontSize ?? 11, measure);
+      const collision = placed.some((box) => box.page === b.page && intersects(box, b));
+      if (!fitted || collision) {
+        deferred.push(node);
+        warnings.push({ code: collision ? "overlap" : "overflow", page: b.page, nodeId: node.id, severity: "warning", message: `Segment ${node.order + 1} could not fit legibly. Its full translation is on a continuation page.` });
+        const reference = `[${node.order + 1}]`;
+        if (b.width >= measure(reference, 9) && b.height >= 12) drawLine(pdf.getPage(b.page - 1), reference, b.x, b.y, b.width, 9);
+        continue;
+      }
+      placed.push(b);
+      fitted.lines.forEach((line, index) => drawLine(pdf.getPage(b.page - 1), line, b.x, b.y + index * fitted.lineHeight, b.width, fitted.size, node.style?.alignment));
+      if (fitted.size < (node.style?.fontSize ?? 11) - 0.5) warnings.push({ code: "material_reflow", page: b.page, nodeId: node.id, severity: "info", message: `Text reduced to ${fitted.size} pt to fit its original region.` });
+    }
+    warnings.push({ code: "font_substitution", page: 1, severity: "warning", message: "Translated text uses an embedded Arabic-capable font. White text masks may alter coloured backgrounds or table rules; inspect the PDF." });
+  } else {
+    deferred.push(...document.nodes.filter((node) => node.sourceText.trim()));
+    if (document.mimeType !== "text/plain") warnings.push({ code: "formatting_approximate", page: 1, severity: "warning", message: "PDF is a readable reconstruction, not a 1:1 Word rendering. Original tables, images, headers and margins are best preserved in the editable Word download." });
   }
 
-  for (const node of document.nodes) {
-    const raw = node.translatedText?.trim();
-    if (!raw) continue;
-    const logicalLines = wrapText(raw, pageSize[0] - margin * 2, fontSize, (value, size) => font.widthOfTextAtSize(rtl ? visualRtl(value) : value, size));
-    for (const logicalLine of logicalLines) {
-      if (y < margin + lineHeight) { page = pdf.addPage(pageSize); y = pageSize[1] - margin; }
-      const line = rtl ? visualRtl(logicalLine) : logicalLine;
-      const width = font.widthOfTextAtSize(line, fontSize);
-      page.drawText(line, { x: rtl ? pageSize[0] - margin - width : margin, y, size: fontSize, font, color: rgb(0.08, 0.13, 0.22) });
-      y -= lineHeight;
+  let flowPage: PDFPage | undefined;
+  let top = 0;
+  let sourcePage = -1;
+  const margin = Math.max(24, Math.min(defaultSize.margin ?? 52, defaultSize.width / 4));
+  function addFlowPage() {
+    flowPage = pdf.addPage([defaultSize.width, defaultSize.height]);
+    top = margin;
+    // Reserve branding areas on reconstructed pages where placement is known.
+    for (const asset of branding.filter((item) => item.pages === "all" || (item.pages === "first" && pdf.getPageCount() === 1))) {
+      const bottom = asset.y * defaultSize.height + asset.width * defaultSize.width / asset.aspect;
+      if (asset.kind === "letterhead" && asset.y < 0.25) top = Math.max(top, bottom + 12);
     }
-    y -= node.type === "heading" ? 9 : 5;
+    if (top > defaultSize.height * 0.55) throw new Error("Letterhead leaves too little space for readable text. Reduce its size or move it.");
   }
-  return pdf.save();
+  for (const node of deferred) {
+    if (!flowPage || (!preservesSource && node.page !== sourcePage)) { addFlowPage(); sourcePage = node.page; }
+    if (preservesSource) {
+      if (top + 35 > defaultSize.height - margin) addFlowPage();
+      drawLine(flowPage!, `Page ${node.page} / Segment ${node.order + 1}`, margin, top, defaultSize.width - margin * 2, 9, "start");
+      top += 18;
+    }
+    const size = Math.min(24, Math.max(10, node.style?.fontSize ?? (node.type === "heading" ? 16 : 11)));
+    const lineHeight = size * 1.5;
+    for (const line of wrapText(node.translatedText!, defaultSize.width - margin * 2, size, measure)) {
+      if (top + lineHeight > defaultSize.height - margin) addFlowPage();
+      drawLine(flowPage!, line, margin, top, defaultSize.width - margin * 2, size, node.style?.alignment);
+      placed.push({ page: pdf.getPageCount(), x: margin, y: top, width: defaultSize.width - margin * 2, height: lineHeight });
+      top += lineHeight;
+    }
+    top += 8;
+  }
+  if (!pdf.getPageCount()) pdf.addPage([defaultSize.width, defaultSize.height]);
+  for (const asset of branding) {
+    const image = asset.mimeType === "image/png" ? await pdf.embedPng(asset.bytes) : await pdf.embedJpg(asset.bytes);
+    for (const [index, page] of pdf.getPages().entries()) {
+      if (!appliesToPage(asset, index + 1, pdf.getPageCount())) continue;
+      const box = { page: index + 1, x: asset.x * page.getWidth(), y: asset.y * page.getHeight(), width: asset.width * page.getWidth(), height: asset.width * page.getWidth() / asset.aspect };
+      if (box.y + box.height > page.getHeight()) throw new Error(`${asset.name} extends beyond page ${index + 1}. Adjust its placement.`);
+      if (placed.some((text) => text.page === index + 1 && intersects(text, box))) {
+        // Preserve readable content. The user can reposition branding and retry.
+        warnings.push({ code: "branding_overlap", page: index + 1, severity: "error", message: `${asset.name} overlaps translated text and was not applied. Adjust placement and rebuild the preview.` });
+        continue;
+      }
+      page.drawImage(image, { x: box.x, y: page.getHeight() - box.y - box.height, width: box.width, height: box.height });
+    }
+  }
+  return { bytes: await pdf.save(), warnings };
 }
-
+export async function createPdfExport(document: CanonicalDocument, direction: LanguageDirection, sourceBytes?: Uint8Array) {
+  return (await renderPdf(document, direction, sourceBytes)).bytes;
+}
 export function createTextExport(document: CanonicalDocument) {
+  assertCompleteTranslation(document);
   return new TextEncoder().encode(document.nodes.map((node) => node.translatedText).filter(Boolean).join("\n\n"));
 }
-
-export async function createDocxExport(document: CanonicalDocument, sourceBytes?: Uint8Array) {
-  if (!sourceBytes || document.mimeType !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-    throw new Error("DOCX export requires an original DOCX source so its OOXML structure can be preserved.");
+export async function createDocxExport(document: CanonicalDocument, sourceBytes?: Uint8Array, branding: RenderBranding[] = []) {
+  assertCompleteTranslation(document);
+  let bytes: Uint8Array;
+  if (sourceBytes && document.mimeType === DOCX_MIME) {
+    bytes = await rebuildDocx(sourceBytes, document.nodes, document.direction);
+  } else {
+    const pageNumbers = [...new Set(document.nodes.map((node) => node.page))].sort((a,b) => a-b);
+    const docx = new Document({
+      sections: pageNumbers.map((pageNumber) => {
+        const size = document.pages?.[pageNumber - 1] ?? { width: 595.28, height: 841.89 };
+        return {
+          properties: { page: { size: { width: Math.round(size.width * 20), height: Math.round(size.height * 20) }, margin: { top: 1040, bottom: 1040, left: 1040, right: 1040 } } },
+          children: document.nodes.filter((node) => node.page === pageNumber && node.translatedText?.trim()).map((node) => new Paragraph({
+            bidirectional: document.direction === "en-ar",
+            alignment: node.style?.alignment === "center" ? AlignmentType.CENTER : document.direction === "en-ar" ? AlignmentType.RIGHT : AlignmentType.LEFT,
+            spacing: { after: 160 },
+            children: [new TextRun({ text: node.translatedText!, rightToLeft: document.direction === "en-ar", size: Math.round(Math.max(10, node.style?.fontSize ?? 11) * 2), bold: node.type === "heading" || (node.style?.fontWeight ?? 400) >= 600, italics: node.style?.italic, font: "Arial" })],
+          })),
+        };
+      }),
+    });
+    bytes = new Uint8Array(await Packer.toBuffer(docx));
   }
-  return rebuildDocx(sourceBytes, document.nodes);
+  return brandDocx(bytes, document, branding);
 }

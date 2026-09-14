@@ -13,6 +13,12 @@ export async function POST(request: Request) {
     const supabase = await createClient();
     const { data: project } = await supabase.from("projects").select("id,title,direction").eq("id", input.projectId).eq("workspace_id", input.workspaceId).maybeSingle();
     if (!project) throw new ApiError(404, "Project not found.", "not_found");
+    if (project.direction !== input.direction) throw new ApiError(409, "The selected target language changed. Start a new document.");
+    if (input.branding.length) {
+      const { data: assets, error } = await supabase.from("workspace_branding").select("id").eq("workspace_id", input.workspaceId).in("id", input.branding.map((item) => item.assetId));
+      if (error) throw error;
+      if (assets?.length !== input.branding.length) throw new ApiError(403, "Choose branding from this workspace.");
+    }
 
     let documentId = input.documentId;
     let mimeType = "text/plain";
@@ -37,7 +43,7 @@ export async function POST(request: Request) {
     const { data: previous } = await supabase.from("document_versions").select("version_number").eq("project_id", project.id).order("version_number", { ascending: false }).limit(1);
     const versionNumber = Number(previous?.[0]?.version_number ?? 0) + 1;
     const versionId = crypto.randomUUID();
-    const { error: versionError } = await supabase.from("document_versions").insert({ id: versionId, workspace_id: input.workspaceId, project_id: project.id, document_id: documentId, version_number: versionNumber, canonical_tree: canonical, layout_warnings: canonical.warnings, created_by: user.id });
+    const { error: versionError } = await supabase.from("document_versions").insert({ id: versionId, workspace_id: input.workspaceId, project_id: project.id, document_id: documentId, version_number: versionNumber, canonical_tree: canonical, branding: input.branding, layout_warnings: canonical.warnings, created_by: user.id });
     if (versionError) throw versionError;
     const nodeRows = canonical.nodes.map((node) => ({ id: node.id, workspace_id: input.workspaceId, project_id: project.id, version_id: versionId, node_key: node.id, node_type: node.type, page_number: node.page, node_order: node.order, source_text: node.sourceText, translated_text: node.translatedText, confidence: node.confidence, bounds: node.bounds, style: node.style, metadata: node.metadata ?? {} }));
     const segmentRows = canonical.nodes.filter((node) => node.sourceText.trim()).map((node, order) => ({ workspace_id: input.workspaceId, project_id: project.id, version_id: versionId, node_id: node.id, segment_order: order, source_text: node.sourceText, source_confidence: node.confidence, quality_flags: (node.confidence ?? 1) < 0.8 ? ["low_ocr_confidence"] : [], created_by: user.id }));

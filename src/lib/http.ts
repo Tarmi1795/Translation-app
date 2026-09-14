@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ApiError } from "@/lib/auth";
+import { ZodError } from "zod";
 
 const NO_STORE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -14,6 +15,9 @@ export function apiData<T>(data: T, init?: ResponseInit) {
 }
 
 export function apiError(error: unknown) {
+  if (error instanceof ZodError) {
+    return NextResponse.json({ error: { code: "invalid_input", message: error.issues.map((issue) => issue.message).join(" ") } }, { status: 400, headers: NO_STORE_HEADERS });
+  }
   if (error instanceof ApiError) {
     return NextResponse.json(
       { error: { code: error.code, message: error.message } },

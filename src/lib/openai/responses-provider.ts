@@ -47,7 +47,7 @@ export class OpenAIResponsesProvider implements TranslationProvider {
     });
     const parsed = translationOutput.parse(JSON.parse(response.output_text));
     const expected = new Set(segments.map((segment) => segment.id));
-    if (parsed.segments.length !== segments.length || parsed.segments.some((segment) => !expected.has(segment.id))) throw new Error("The translation provider returned an incomplete segment set.");
+    if (parsed.segments.length !== segments.length || new Set(parsed.segments.map((segment) => segment.id)).size !== expected.size || parsed.segments.some((segment) => !expected.has(segment.id) || !segment.translatedText.trim())) throw new Error("The translation provider returned an incomplete or duplicate segment set.");
     return parsed.segments;
   }
 
@@ -60,7 +60,7 @@ export class OpenAIResponsesProvider implements TranslationProvider {
       model: this.ocrModel,
       store: false,
       reasoning: { effort: "low" },
-      instructions: "Extract all visible English and Arabic document text without translating it. Return blocks in natural reading order with page number, block type, confidence from 0 to 1, and approximate pixel coordinates where available. Preserve table cell separation. Never invent obscured text; lower confidence instead.",
+      instructions: "Extract ALL visible English and Arabic document text without translating it, including headers, footers, stamps and text inside images. Return blocks in natural reading order with page number, block type, confidence from 0 to 1, and bounds using NORMALIZED coordinates 0 to 1000 on each axis, origin TOP LEFT. Bounds x/y/width/height must use that same normalized scale, NOT pixels. Preserve table cell separation. Never invent obscured text; lower confidence instead.",
       input: [{ role: "user", content: [{ type: "input_text", text: `OCR this document: ${title}` }, media] }],
       text: { format: { type: "json_schema", name: "ocr_document", strict: true, schema: ocrSchema } },
     });

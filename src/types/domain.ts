@@ -85,7 +85,7 @@ export interface TranslationSegment {
 }
 
 export interface LayoutWarning {
-  code: "overflow" | "clipped" | "overlap" | "font_substitution" | "material_reflow";
+  code: "overflow" | "clipped" | "overlap" | "font_substitution" | "material_reflow" | "ocr_uncertain" | "branding_skipped" | "branding_overlap" | "formatting_approximate";
   message: string;
   page: number;
   nodeId?: string;
@@ -121,4 +121,29 @@ export interface CanonicalDocument {
   sourceWordCount: number;
   nodes: DocumentNode[];
   warnings: LayoutWarning[];
+  pages?: Array<{ width: number; height: number; margin?: number }>;
+  sourceHasLetterhead?: boolean;
+}
+
+export interface BrandingPlacement {
+  x: number;
+  y: number;
+  width: number;
+  pages: "first" | "all" | "last";
+}
+
+export interface BrandingSelection extends BrandingPlacement {
+  assetId: string;
+  skipIfPresent: boolean;
+  alreadyPresent: boolean;
+}
+
+export interface BrandingAsset {
+  id: string;
+  name: string;
+  kind: "letterhead" | "stamp";
+  width: number;
+  height: number;
+  placement: BrandingPlacement;
+  previewUrl: string;
 }

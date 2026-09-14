@@ -8,5 +8,5 @@ export default async function TranslatePage() {
   const { activeWorkspace } = await getWorkspaceContext();
   const supabase = await createClient();
   const { data: account } = activeWorkspace ? await supabase.from("credit_accounts").select("balance,reserved").eq("workspace_id", activeWorkspace.id).maybeSingle() : { data: null };
-  return <TranslationComposer workspaceId={activeWorkspace?.id} availableCredits={account ? Number(account.balance) - Number(account.reserved) : 0} configured />;
+  return <TranslationComposer key={activeWorkspace?.id} workspaceId={activeWorkspace?.id} availableCredits={account ? Number(account.balance) - Number(account.reserved) : 0} configured />;
 }
