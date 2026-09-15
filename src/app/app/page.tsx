@@ -13,7 +13,7 @@ export default async function DashboardPage() {
   const [{ data: account }, { data: projects }, { count: reviewCount }, { count: failedCount }] = await Promise.all([
     supabase.from("credit_accounts").select("balance,reserved").eq("workspace_id", activeWorkspace.id).maybeSingle(),
     supabase.from("projects").select("id,title,state,direction,source_word_count,updated_at").eq("workspace_id", activeWorkspace.id).order("updated_at", { ascending: false }).limit(8),
-    supabase.from("assignments").select("id", { count: "exact", head: true }).eq("workspace_id", activeWorkspace.id).eq("status", "pending"),
+    supabase.from("projects").select("id", { count: "exact", head: true }).eq("workspace_id", activeWorkspace.id).eq("state", "review"),
     supabase.from("translation_jobs").select("id", { count: "exact", head: true }).eq("workspace_id", activeWorkspace.id).eq("stage", "failed"),
   ]);
   return (

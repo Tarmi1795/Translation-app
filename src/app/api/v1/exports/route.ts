@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   let exportId: string | null = null;
   try {
     const input = exportSchema.parse(await request.json());
-    const { user } = await requireWorkspaceRole(input.workspaceId);
+    const { user } = await requireWorkspaceRole(input.workspaceId, ["owner", "admin", "translator"]);
     const supabase = await createClient();
     const { data: project } = await supabase.from("projects").select("id,title,direction,current_document_id").eq("id", input.projectId).eq("workspace_id", input.workspaceId).maybeSingle();
     if (!project) throw new ApiError(404, "Project not found.", "not_found");

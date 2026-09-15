@@ -20,7 +20,20 @@ async function loadArabicFont() {
 function visualRtl(text: string) {
   const shaped = ArabicShaper.convertArabic(text);
   const bidi = bidiFactory();
-  return bidi.getReorderedString(shaped, bidi.getEmbeddingLevels(shaped, "rtl"));
+  const reordered = bidi.getReorderedString(shaped, bidi.getEmbeddingLevels(shaped, "rtl"));
+  // Bidi reordering places a combining mark before its base letter in visual
+  // order; fontkit's mark attachment then returns null positions and crashes
+  // the layout. Swap each mark back behind its base so the glyph run shapes.
+  const isMark = (character: string) => /[\u064B-\u0655\u0670]/.test(character);
+  const isArabicBase = (character: string) => /[\u0621-\u063A\u0641-\u064A\uFB50-\uFDFF\uFE70-\uFEFF]/.test(character);
+  const chars = Array.from(reordered);
+  for (let index = 0; index < chars.length - 1; index += 1) {
+    if (isMark(chars[index]) && isArabicBase(chars[index + 1])) {
+      [chars[index], chars[index + 1]] = [chars[index + 1], chars[index]];
+      index += 1;
+    }
+  }
+  return chars.join("");
 }
 export function assertCompleteTranslation(document: CanonicalDocument) {
   const missing = document.nodes.filter((node) => node.sourceText.trim() && !node.translatedText?.trim());
@@ -39,17 +52,40 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
   pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(await loadArabicFont(), { subset: true });
   const rtl = direction === "en-ar";
-  const visual = (text: string) => rtl ? visualRtl(text) : text;
-  const measure = (text: string, size: number) => font.widthOfTextAtSize(visual(text), size);
+  // Control characters (e.g. tabs in model output) have no glyph in the Arabic
+  // font and crash pdf-lib's layout with a null glyph; normalize them to spaces.
+  const unsupported = /[\u0000-\u001F\u007F\u200B-\u200F\u2028\u2029]/g;
+  const visual = (text: string) => {
+    const cleaned = text.replace(unsupported, " ");
+    return rtl ? visualRtl(cleaned) : cleaned;
+  };
+  const measure = (text: string, size: number) => {
+    try { return font.widthOfTextAtSize(visual(text), size); }
+    catch { return Array.from(text).length * size * 0.6; }
+  };
   const defaultSize = document.pages?.[0] ?? { width: 595.28, height: 841.89, margin: 52 };
   const placed: Array<{ page: number; x: number; y: number; width: number; height: number }> = [];
   const deferred: DocumentNode[] = [];
 
   const drawLine = (page: PDFPage, text: string, x: number, top: number, width: number, size: number, alignment?: string) => {
     const line = visual(text);
-    const textWidth = font.widthOfTextAtSize(line, size);
+    let textWidth: number;
+    try { textWidth = font.widthOfTextAtSize(line, size); }
+    catch { textWidth = Array.from(line).length * size * 0.6; }
     const align = alignment === "center" ? (width - textWidth) / 2 : rtl || alignment === "end" ? width - textWidth : 0;
-    page.drawText(line, { x: x + Math.max(0, align), y: page.getHeight() - top - size, size, font, color: rgb(0.08, 0.1, 0.14) });
+    const at = { x: x + Math.max(0, align), y: page.getHeight() - top - size, size, font, color: rgb(0.08, 0.1, 0.14) };
+    try { page.drawText(line, at); }
+    catch {
+      // A glyph outside the embedded font must not fail the whole export:
+      // draw character by character and skip the few unsupported ones.
+      let cursor = at.x;
+      for (const character of Array.from(line)) {
+        const charWidth = font.widthOfTextAtSize(character, size);
+        try { page.drawText(character, { ...at, x: cursor }); }
+        catch { /* Skip the unrenderable glyph; the surrounding line stays. */ }
+        cursor += charWidth;
+      }
+    }
   };
 
   if (preservesSource) {

@@ -33,7 +33,8 @@ interface DashboardProps {
 }
 
 export function Dashboard({ name, availableCredits, reservedCredits, projects, reviewCount, failedCount, configured }: DashboardProps) {
-  const creditPercent = Math.min(100, Math.max(0, (availableCredits / 5000) * 100));
+  const creditTotal = Math.max(5000, availableCredits);
+  const creditPercent = Math.min(100, Math.max(0, (availableCredits / creditTotal) * 100));
 
   return (
     <div>
@@ -59,7 +60,7 @@ export function Dashboard({ name, availableCredits, reservedCredits, projects, r
       <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Workspace summary">
         <Metric label="Words available" value={formatNumber(availableCredits)} detail={reservedCredits ? `${formatNumber(reservedCredits)} currently reserved` : "Free beta credits ready"} icon={Languages} />
         <Metric label="Recent projects" value={String(projects.length)} detail="Visible in this workspace" icon={FileText} />
-        <Metric label="Needs review" value={String(reviewCount)} detail="Assignments and layout checks" icon={Clock3} tone={reviewCount ? "warning" : "default"} />
+        <Metric label="Needs review" value={String(reviewCount)} detail={reviewCount ? "Projects waiting for approval" : "Nothing waiting on you"} icon={Clock3} tone={reviewCount ? "warning" : "default"} />
         <Metric label="Processing issues" value={String(failedCount)} detail={failedCount ? "Open a job to retry" : "No current failures"} icon={failedCount ? TriangleAlert : CheckCircle2} tone={failedCount ? "danger" : "success"} />
       </section>
 
@@ -95,7 +96,7 @@ export function Dashboard({ name, availableCredits, reservedCredits, projects, r
           <div className="flex items-start justify-between gap-5">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Beta balance</p>
-              <h2 className="mt-2 text-xl font-bold">5,000 words included</h2>
+              <h2 className="mt-2 text-xl font-bold">{formatNumber(creditTotal)} words included</h2>
             </div>
             <div className="relative grid size-16 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(var(--accent) ${creditPercent}%, var(--subtle) ${creditPercent}% 100%)` }} aria-label={`${Math.round(creditPercent)} percent of beta credits remaining`}>
               <span className="grid size-12 place-items-center rounded-full bg-[var(--surface)] text-xs font-bold tabular-nums">{Math.round(creditPercent)}%</span>
@@ -103,7 +104,7 @@ export function Dashboard({ name, availableCredits, reservedCredits, projects, r
           </div>
           <p className="mt-5 text-sm leading-6 text-[var(--muted)]">Credits do not replenish automatically. An administrator can issue an audited beta grant when needed.</p>
           <div className="mt-5 h-2 overflow-hidden rounded-full bg-[var(--subtle)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-300" style={{ width: `${creditPercent}%` }} /></div>
-          <div className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold text-[var(--muted)]"><span>{formatNumber(availableCredits)} remaining</span><span>5,000 total</span></div>
+          <div className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold text-[var(--muted)]"><span>{formatNumber(availableCredits)} remaining</span><span>{formatNumber(creditTotal)} total</span></div>
           <div className="mt-6 flex gap-3 rounded-xl border bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--muted)]"><ShieldCheck aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--success)]" size={18} /><p><strong className="text-[var(--foreground)]">Private by default.</strong> Paid plans are coming later; no checkout or card details are collected.</p></div>
         </Card>
       </div>

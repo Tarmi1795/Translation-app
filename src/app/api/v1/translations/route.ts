@@ -37,6 +37,9 @@ export async function POST(request: Request) {
     }
     if (jobError || !job) throw jobError ?? new Error("The translation job could not be created.");
     jobId = job.id;
+    // Reclaim credits stranded by earlier failed runs before checking the
+    // balance, so a stale reservation cannot block new work.
+    await createAdminClient().rpc("release_expired_reservations");
     const { error: reserveError } = await supabase.rpc("reserve_credits", { p_workspace_id: input.workspaceId, p_job_id: job.id, p_amount: requiredWords });
     if (reserveError) throw new ApiError(reserveError.message.includes("insufficient") ? 402 : 409, reserveError.message, reserveError.message.includes("insufficient") ? "insufficient_credits" : "credit_reservation_failed");
     await supabase.from("projects").update({ state: "translating" }).eq("id", project.id);

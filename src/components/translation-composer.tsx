@@ -22,6 +22,8 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
   const [projectId, setProjectId] = useState<string | null>(null);
   const [branding, setBranding] = useState<BrandingSelection[]>([]);
   const [versionId, setVersionId] = useState<string | null>(null);
+  const [uploadedDocumentId, setUploadedDocumentId] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [estimate, setEstimate] = useState<number | null>(null);
   const [requiresOcrReview, setRequiresOcrReview] = useState(false);
   const [busy, setBusy] = useState<"estimating" | "starting" | null>(null);
@@ -53,14 +55,22 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
 
       let documentId: string | undefined;
       if (mode !== "text" && file) {
-        const upload = await api<{ documentId: string; signedUrl: string; token: string; path: string }>("/api/v1/uploads", {
-          method: "POST",
-          body: JSON.stringify({ workspaceId, projectId: project.id, fileName: file.name, mimeType: file.type || "application/octet-stream", size: file.size }),
-        });
-        const uploadResponse = await fetch(upload.signedUrl, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false" }, body: file });
-        if (!uploadResponse.ok) throw new Error("The file could not be uploaded. Please try again.");
-        await api(`/api/v1/uploads/${upload.documentId}/finalize`, { method: "POST", body: JSON.stringify({ token: upload.token }) });
-        documentId = upload.documentId;
+        // A retry after a later failure reuses the already-uploaded document
+        // instead of creating duplicate uploads and projects.
+        if (uploadedDocumentId && uploadedFile === file) {
+          documentId = uploadedDocumentId;
+        } else {
+          const upload = await api<{ documentId: string; signedUrl: string; token: string; path: string }>("/api/v1/uploads", {
+            method: "POST",
+            body: JSON.stringify({ workspaceId, projectId: project.id, fileName: file.name, mimeType: file.type || "application/octet-stream", size: file.size }),
+          });
+          const uploadResponse = await fetch(upload.signedUrl, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false" }, body: file });
+          if (!uploadResponse.ok) throw new Error("The file could not be uploaded. Please try again.");
+          await api(`/api/v1/uploads/${upload.documentId}/finalize`, { method: "POST", body: JSON.stringify({ token: upload.token }) });
+          documentId = upload.documentId;
+          setUploadedDocumentId(upload.documentId);
+          setUploadedFile(file);
+        }
       }
 
       const result = await api<{ versionId: string; sourceWordCount: number; requiresOcrReview: boolean }>("/api/v1/estimates", {
@@ -106,9 +116,24 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
     setRequiresOcrReview(false);
     setError(null);
     setFile(null);
+    setUploadedDocumentId(null);
+    setUploadedFile(null);
   }
 
   function selectFile(nextFile: File | null) {
+    setError(null);
+    if (nextFile) {
+      const extension = nextFile.name.split(".").pop()?.toLowerCase() ?? "";
+      const allowed = mode === "document" ? ["pdf", "docx"] : ["jpg", "jpeg", "png", "pdf"];
+      if (!allowed.includes(extension)) {
+        setError(mode === "document" ? "Only PDF and DOCX files are supported. Paste plain text with the Text option." : "Scans must be JPG, PNG, or PDF files.");
+        setFile(null); setEstimate(null); setRequiresOcrReview(false); setProjectId(null);
+        setUploadedDocumentId(null); setUploadedFile(null);
+        if (fileRef.current) fileRef.current.value = "";
+        return;
+      }
+    }
+    if (nextFile !== uploadedFile) { setUploadedDocumentId(null); setUploadedFile(null); }
     setFile(nextFile);
     setEstimate(null);
     setRequiresOcrReview(false);
@@ -133,7 +158,6 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
       <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_340px]">
         <Card className="overflow-hidden p-5 sm:p-7">
           <fieldset disabled={Boolean(busy)} className="min-w-0">
-          <fieldset>
             <legend className="text-sm font-bold">Target language</legend>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {(["en-ar", "ar-en"] as const).map((value) => (
@@ -142,7 +166,6 @@ export function TranslationComposer({ workspaceId, availableCredits, configured 
                 </button>
               ))}
             </div>
-          </fieldset>
 
           <fieldset className="mt-7">
             <legend className="text-sm font-bold">Source type</legend>

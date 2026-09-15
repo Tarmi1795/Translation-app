@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -46,11 +46,23 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const currentPage = navigation.find(({ href }) => href === "/app" ? pathname === href : pathname.startsWith(href))?.label ?? (pathname.startsWith("/app/admin") ? "Beta administration" : "Workspace");
-  const creditPercent = Math.min(100, Math.max(0, (creditBalance / 5000) * 100));
+  const creditPercent = Math.min(100, Math.max(0, (creditBalance / Math.max(5000, creditBalance)) * 100));
+
+  useEffect(() => {
+    if (!workspaceOpen) return;
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key === "Escape") { setWorkspaceOpen(false); return; }
+      if (event instanceof MouseEvent && workspaceRef.current && !workspaceRef.current.contains(event.target as Node)) setWorkspaceOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [workspaceOpen]);
 
   async function signOut() {
     await createClient().auth.signOut();
@@ -59,12 +71,14 @@ export function AppShell({
   }
 
   async function selectWorkspace(id: string) {
-    const response = await fetch("/api/v1/workspaces/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: id }) });
-    if (!response.ok) { setWorkspaceError("The workspace could not be changed. Please try again."); return; }
-    setWorkspaceError(null);
-    setWorkspaceOpen(false);
-    router.replace("/app");
-    router.refresh();
+    try {
+      const response = await fetch("/api/v1/workspaces/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: id }) });
+      if (!response.ok) { setWorkspaceError("The workspace could not be changed. Please try again."); return; }
+      setWorkspaceError(null);
+      setWorkspaceOpen(false);
+      if (pathname !== "/app") router.replace("/app");
+      router.refresh();
+    } catch { setWorkspaceError("The workspace could not be changed. Please try again."); }
   }
 
   const sidebar = (
@@ -74,7 +88,7 @@ export function AppShell({
         <button type="button" onClick={() => setMobileOpen(false)} className="grid size-11 place-items-center rounded-xl transition-colors hover:bg-[var(--subtle)] lg:hidden" aria-label="Close navigation"><X aria-hidden="true" size={20} /></button>
       </div>
 
-      <div className="relative mx-3 mt-4">
+      <div ref={workspaceRef} className="relative mx-3 mt-4">
         {workspaceError && <p role="alert" className="mb-2 text-sm text-[var(--danger)]">{workspaceError}</p>}
         <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">Current workspace</p>
         <button type="button" onClick={() => setWorkspaceOpen((open) => !open)} className="interactive-surface flex min-h-14 w-full items-center gap-3 rounded-xl border bg-[var(--surface)] px-3 text-start" aria-expanded={workspaceOpen} aria-haspopup="listbox">

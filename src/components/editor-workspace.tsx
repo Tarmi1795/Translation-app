@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Download, FileCheck2, LoaderCircle, MessageSquare, RefreshCw, Save, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Ban, Check, CheckCircle2, Download, FileCheck2, LoaderCircle, MessageSquare, RefreshCw, Save, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -66,13 +66,18 @@ export function EditorWorkspace({
   const [view, setView] = useState<"preview" | "text">("preview");
   const [artifact, setArtifact] = useState<{ id: string; format: string; warnings: LayoutWarning[] } | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [pollingOffline, setPollingOffline] = useState(false);
   const pendingPreview = useRef<Promise<void> | null>(null);
   const jobActive = job && !["completed", "failed", "cancelled", "ocr_review"].includes(job.stage);
   const activeJobId = job?.id;
+  const canCancel = Boolean(jobActive) && ["queued", "validating", "extracting", "ocr_review", "reserving_credits", "retrieving_context", "translating"].includes(job?.stage ?? "");
 
   useEffect(() => {
     if (!jobActive || !activeJobId) return;
     let stopped = false;
+    let failures = 0;
     let timer: ReturnType<typeof setTimeout>;
     const abort = new AbortController();
     const poll = async () => {
@@ -81,10 +86,15 @@ export function EditorWorkspace({
       if (!response.ok) throw new Error("Progress could not be loaded. Retrying…");
       const payload = await response.json();
       if (stopped) return;
+      failures = 0;
+      setPollingOffline(false);
       setJob(payload.data);
       if (["completed", "failed", "cancelled", "ocr_review"].includes(payload.data.stage)) router.refresh();
-      } catch { /* A transient polling error must not discard the current job. */ }
-      finally { if (!stopped) timer = setTimeout(poll, 3000); }
+      } catch { /* A transient polling error must not discard the current job. */
+        failures += 1;
+        if (!stopped && failures >= 10) { setPollingOffline(true); return; }
+      }
+      finally { if (!stopped && failures < 10) timer = setTimeout(poll, 3000); }
     };
     timer = setTimeout(poll, 1000);
     return () => { stopped = true; clearTimeout(timer); abort.abort(); };
@@ -97,7 +107,7 @@ export function EditorWorkspace({
 
   useEffect(() => {
     if (!unsaved) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [unsaved]);
@@ -108,38 +118,72 @@ export function EditorWorkspace({
     setSegments((current) => current.map((segment) => segment.id === id ? { ...segment, [source ? "sourceText" : "translatedText"]: value } : segment));
   }
 
+  // API routes always answer JSON, but a crashed edge function may answer HTML;
+  // parsing that would throw before the UI can react.
+  async function readPayload(response: Response) {
+    try { return await response.json(); }
+    catch { return { error: { message: `The server answered with HTTP ${response.status}.` } }; }
+  }
+
   async function saveSegment(segment: EditorSegment, source = false) {
     setSavingId(segment.id);
     setError(null);
-    const response = await fetch(`/api/v1/segments/${segment.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(source ? { sourceText: segment.sourceText, reason: "ocr_correction" } : { translatedText: segment.translatedText, reason: "human_edit" }) });
-    const payload = await response.json();
-    setSavingId(null);
-    if (!response.ok) setError(payload.error?.message ?? "The segment could not be saved.");
-    else {
-      setDirtyIds((current) => { const next = new Set(current); next.delete(`${segment.id}:${source ? "source" : "translation"}`); if (payload.data.translationInvalidated) next.delete(`${segment.id}:translation`); return next; });
-      setSegments((current) => current.map((item) => item.id === segment.id ? { ...item, ...(source ? { sourceConfidence: 1, qualityFlags: item.qualityFlags.filter((flag) => flag !== "low_ocr_confidence"), translatedText: payload.data.translationInvalidated ? "" : item.translatedText, status: payload.data.translationInvalidated ? "pending" : item.status } : { status: "edited", qualityFlags: payload.data.qualityFlags ?? item.qualityFlags }) } : item));
-      setArtifact(null);
-      setMessage(source ? "Source saved. Changed source text must be translated again." : "Translation saved. Rebuild the preview to see the change.");
-    }
+    try {
+      const response = await fetch(`/api/v1/segments/${segment.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(source ? { sourceText: segment.sourceText, reason: "ocr_correction" } : { translatedText: segment.translatedText, reason: "human_edit" }) });
+      const payload = await readPayload(response);
+      if (!response.ok) setError(payload.error?.message ?? "The segment could not be saved.");
+      else {
+        setDirtyIds((current) => { const next = new Set(current); next.delete(`${segment.id}:${source ? "source" : "translation"}`); if (payload.data.translationInvalidated) next.delete(`${segment.id}:translation`); return next; });
+        setSegments((current) => current.map((item) => item.id === segment.id ? { ...item, ...(source ? { sourceConfidence: 1, qualityFlags: item.qualityFlags.filter((flag) => flag !== "low_ocr_confidence"), translatedText: payload.data.translationInvalidated ? "" : item.translatedText, status: payload.data.translationInvalidated ? "pending" : item.status } : { status: "edited", qualityFlags: payload.data.qualityFlags ?? item.qualityFlags }) } : item));
+        setArtifact(null);
+        setMessage(source ? "Source saved. Changed source text must be translated again." : "Translation saved. Rebuild the preview to see the change.");
+      }
+    } catch { setError("The segment could not be saved. Check your connection and retry."); }
+    finally { setSavingId(null); }
+  }
+
+  async function cancelJob() {
+    if (!job) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/v1/translations/${job.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "cancel" }) });
+      const payload = await readPayload(response);
+      if (!response.ok) setError(payload.error?.message ?? "The translation could not be cancelled.");
+      else { setMessage("Cancellation requested. Reserved credits return to your balance."); router.refresh(); }
+    } catch { setError("The cancellation request failed. Check your connection and retry."); }
+    finally { setCancelling(false); }
   }
 
   async function reviewAction(action: "submit" | "request_changes" | "approve") {
     setError(null);
-    const response = await fetch("/api/v1/reviews", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: project.workspaceId, projectId: project.id, action }) });
-    const payload = await response.json();
-    if (!response.ok) setError(payload.error?.message ?? "Review action failed.");
-    else { setMessage(`Project ${action.replace("_", " ")}.`); router.refresh(); }
+    try {
+      const response = await fetch("/api/v1/reviews", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: project.workspaceId, projectId: project.id, action, ownerOverride: action === "approve" && role === "owner" && overrideReason.trim().length >= 8, reason: overrideReason.trim() || undefined }) });
+      const payload = await readPayload(response);
+      if (!response.ok) setError(payload.error?.message ?? "Review action failed.");
+      else { setMessage(`Project ${action.replace("_", " ")}.`); setOverrideReason(""); router.refresh(); }
+    } catch { setError("The review action failed. Check your connection and retry."); }
   }
 
   async function requestExport(format: "docx" | "pdf" | "txt") {
     setExporting(format);
     setError(null);
-    const response = await fetch("/api/v1/exports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: project.workspaceId, projectId: project.id, format }) });
-    const payload = await response.json();
-    setExporting(null);
-    if (!response.ok) setError(payload.error?.message ?? "Export failed.");
-    else if (format === "txt") router.push(`/api/v1/exports/${payload.data.id}/download`);
-    else { setArtifact({ id: payload.data.id, format, warnings: payload.data.warnings ?? [] }); setView("preview"); }
+    try {
+      const response = await fetch("/api/v1/exports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: project.workspaceId, projectId: project.id, format }) });
+      const payload = await readPayload(response);
+      if (!response.ok) setError(payload.error?.message ?? "Export failed.");
+      else if (format === "txt") {
+        // A route-handler download must bypass the client router: a .txt file
+        // is not a page. An anchor click forces the browser's download path.
+        const anchor = document.createElement("a");
+        anchor.href = `/api/v1/exports/${payload.data.id}/download`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      else { setArtifact({ id: payload.data.id, format, warnings: payload.data.warnings ?? [] }); setView("preview"); }
+    } catch { setError("Export failed. Please retry."); }
+    finally { setExporting(null); }
   }
 
   // The same in-flight promise is reused during Strict Mode's effect replay.
@@ -165,11 +209,14 @@ export function EditorWorkspace({
 
   async function startTranslation() {
     setStarting(true); setError(null);
-    const response = await fetch("/api/v1/translations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: project.workspaceId, projectId: project.id }) });
-    const payload = await response.json();
-    if (!response.ok) { setError(payload.error?.message ?? "Translation could not be started."); setStarting(false); return; }
-    setJob({ id: payload.data.jobId, stage: payload.data.stage ?? "queued", progress: 20, completedSegments: 0, totalSegments: segments.length });
-    setStarting(false); router.refresh();
+    try {
+      const response = await fetch("/api/v1/translations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: project.workspaceId, projectId: project.id }) });
+      const payload = await readPayload(response);
+      if (!response.ok) { setError(payload.error?.message ?? "Translation could not be started."); return; }
+      setJob({ id: payload.data.jobId, stage: payload.data.stage ?? "queued", progress: 20, completedSegments: 0, totalSegments: segments.length });
+      router.refresh();
+    } catch { setError("Translation could not be started. Check your connection and retry."); }
+    finally { setStarting(false); }
   }
 
   return (
@@ -198,8 +245,11 @@ export function EditorWorkspace({
             <span className="text-2xl font-bold tabular-nums">{Math.round(job.progress)}%</span>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--subtle)]"><div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-300" style={{ width: `${Math.max(2, Math.min(100, job.progress))}%` }} /></div>
+          {canCancel && <div className="mt-4 flex justify-end"><Button variant="secondary" size="sm" onClick={cancelJob} disabled={cancelling}>{cancelling ? <LoaderCircle aria-hidden="true" className="animate-spin" size={16} /> : <Ban aria-hidden="true" size={16} />} Cancel translation</Button></div>}
         </Card>
       )}
+
+      {pollingOffline && <p role="alert" className="mt-4 rounded-xl border border-[color:color-mix(in_srgb,var(--danger)_30%,var(--border))] bg-[color:color-mix(in_srgb,var(--danger)_8%,var(--surface))] p-4 text-sm text-[var(--danger)]">Live progress updates stopped. Refresh the page to reconnect — the translation itself continues in the background.</p>}
 
       {(lowConfidence > 0 || warnings.length > 0) && (
         <div className="mt-6 grid gap-3 md:grid-cols-2">
@@ -226,11 +276,11 @@ export function EditorWorkspace({
       </>}
 
       {view === "text" && <><label className="my-3 flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={onlyIssues} onChange={(event) => setOnlyIssues(event.target.checked)} />Show only segments needing attention</label><fieldset disabled={Boolean(jobActive) || Boolean(savingId)} className="mt-3 grid min-w-0 gap-4">
-        {segments.length ? segments.filter((segment) => !onlyIssues || segment.qualityFlags.length || !segment.translatedText.trim()).map((segment, index) => {
+        {segments.length ? segments.filter((segment) => !onlyIssues || segment.qualityFlags.length || !segment.translatedText.trim()).map((segment) => {
           const sourceIsArabic = project.direction === "ar-en";
           return (
             <Card key={segment.id} className="overflow-hidden">
-              <div className="flex items-center justify-between border-b bg-[var(--subtle)] px-4 py-3 sm:px-5"><p className="text-xs font-bold uppercase tracking-[0.1em] text-[var(--muted)]">Segment {index + 1}</p><div className="flex gap-2">{segment.qualityFlags.map((flag) => <Badge key={flag} className="text-[var(--warning)]">{flag.replaceAll("_", " ")}</Badge>)}{(segment.sourceConfidence ?? 1) < 0.8 && <Badge className="text-[var(--warning)]">OCR {Math.round((segment.sourceConfidence ?? 0) * 100)}%</Badge>}</div></div>
+              <div className="flex items-center justify-between border-b bg-[var(--subtle)] px-4 py-3 sm:px-5"><p className="text-xs font-bold uppercase tracking-[0.1em] text-[var(--muted)]">Segment {segment.order + 1}</p><div className="flex gap-2">{segment.qualityFlags.map((flag) => <Badge key={flag} className="text-[var(--warning)]">{flag.replaceAll("_", " ")}</Badge>)}{(segment.sourceConfidence ?? 1) < 0.8 && <Badge className="text-[var(--warning)]">OCR {Math.round((segment.sourceConfidence ?? 0) * 100)}%</Badge>}</div></div>
               <div className="grid lg:grid-cols-2">
                 <section className="border-b p-4 lg:border-b-0 lg:border-e sm:p-5" dir={sourceIsArabic ? "rtl" : "ltr"}><label htmlFor={`source-${segment.id}`} className="mb-2 block text-xs font-bold uppercase tracking-[0.1em] text-[var(--muted)]">Source {sourceIsArabic ? "· العربية" : "· English"}</label><textarea id={`source-${segment.id}`} value={segment.sourceText} onChange={(event) => updateSegment(segment.id, event.target.value, true)} className="min-h-40 w-full resize-y rounded-xl border bg-[var(--surface)] p-4 text-base leading-8" /><div className="mt-3 flex justify-end"><Button variant="ghost" size="sm" onClick={() => saveSegment(segment, true)} disabled={savingId === segment.id}>{savingId === segment.id ? <LoaderCircle aria-hidden="true" className="animate-spin" size={16} /> : <Save aria-hidden="true" size={16} />} Save OCR correction</Button></div></section>
                 <section className="p-4 sm:p-5" dir={sourceIsArabic ? "ltr" : "rtl"}><label htmlFor={`translation-${segment.id}`} className="mb-2 block text-xs font-bold uppercase tracking-[0.1em] text-[var(--muted)]">Translation {sourceIsArabic ? "· English" : "· العربية"}</label><textarea id={`translation-${segment.id}`} value={segment.translatedText} onChange={(event) => updateSegment(segment.id, event.target.value)} className="min-h-40 w-full resize-y rounded-xl border bg-[var(--surface)] p-4 text-base leading-8" /><div className="mt-3 flex justify-end"><Button size="sm" onClick={() => saveSegment(segment)} disabled={savingId === segment.id}>{savingId === segment.id ? <LoaderCircle aria-hidden="true" className="animate-spin" size={16} /> : <Check aria-hidden="true" size={16} />} Save translation</Button></div></section>
@@ -244,8 +294,11 @@ export function EditorWorkspace({
 
       {segments.length > 0 && (
         <Card className="mt-6 flex flex-col justify-between gap-4 p-4 shadow-[var(--shadow-lg)] sm:flex-row sm:items-center sm:p-5">
-          <div className="flex items-start gap-3"><MessageSquare aria-hidden="true" className="mt-1 text-[var(--accent)]" size={20} /><div><p className="font-bold">Review workflow</p><p className="mt-1 text-sm text-[var(--muted)]">Translators cannot approve their own organization work without an audited owner override.</p></div></div>
-          <fieldset disabled={unsaved || !translationReady || !artifact || artifact.warnings.some((warning) => warning.severity === "error")} className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" onClick={() => reviewAction("request_changes")}>Request changes</Button>{["owner", "admin", "reviewer"].includes(role) ? <Button size="sm" onClick={() => reviewAction("approve")}><CheckCircle2 aria-hidden="true" size={17} /> Approve reviewed document</Button> : <Button size="sm" onClick={() => reviewAction("submit")}>Submit for review</Button>}</fieldset>
+          <div className="flex items-start gap-3 min-w-0"><MessageSquare aria-hidden="true" className="mt-1 shrink-0 text-[var(--accent)]" size={20} /><div className="min-w-0"><p className="font-bold">Review workflow</p><p className="mt-1 text-sm text-[var(--muted)]">Translators cannot approve their own organization work without an audited owner override.</p>{!artifact && <p className="mt-1 text-sm text-[var(--muted)]">Build a PDF or Word preview to unlock review actions.</p>}{artifact?.warnings.some((warning) => warning.severity === "error") && <p className="mt-1 text-sm text-[var(--warning)]">Resolve the flagged branding/layout errors in the preview, then rebuild it.</p>}</div></div>
+          <fieldset disabled={unsaved || !translationReady || !artifact || artifact.warnings.some((warning) => warning.severity === "error")} className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {role === "owner" && <input value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} maxLength={2000} className="min-h-9 w-full max-w-56 rounded-xl border bg-[var(--surface)] px-3 text-sm" placeholder="Owner override reason (optional)" aria-label="Owner override reason" />}
+            <Button variant="secondary" size="sm" onClick={() => reviewAction("request_changes")}>Request changes</Button>{["owner", "admin", "reviewer"].includes(role) ? <Button size="sm" onClick={() => reviewAction("approve")}><CheckCircle2 aria-hidden="true" size={17} /> Approve reviewed document</Button> : <Button size="sm" onClick={() => reviewAction("submit")}>Submit for review</Button>}
+          </fieldset>
         </Card>
       )}
     </div>

@@ -10,6 +10,12 @@ const ocrOutput = z.object({ pageCount: z.number().int().positive(), blocks: z.a
 const translationSchema = { type: "object", additionalProperties: false, required: ["segments"], properties: { segments: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "translatedText"], properties: { id: { type: "string" }, translatedText: { type: "string" } } } } } } as const;
 const ocrSchema = { type: "object", additionalProperties: false, required: ["pageCount", "blocks"], properties: { pageCount: { type: "integer", minimum: 1 }, blocks: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "text", "page", "order", "confidence", "type"], properties: { id: { type: "string" }, text: { type: "string" }, page: { type: "integer", minimum: 1 }, order: { type: "integer", minimum: 0 }, confidence: { type: "number", minimum: 0, maximum: 1 }, type: { type: "string", enum: ["heading", "paragraph", "table", "table_cell", "header", "footer"] }, bounds: { type: "object", additionalProperties: false, required: ["x", "y", "width", "height", "page"], properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" }, page: { type: "integer", minimum: 1 } } } } } } } } as const;
 
+function parseProviderJson(outputText: string | undefined, what: string) {
+  if (!outputText?.trim()) throw new Error(`The translation provider returned no ${what} content. Check the model configuration and API quota, then retry.`);
+  try { return JSON.parse(outputText); }
+  catch { throw new Error(`The translation provider returned an unreadable ${what} response. Retry the operation.`); }
+}
+
 export class OpenAIResponsesProvider implements TranslationProvider {
   private client: OpenAI;
   private translationModel: string;
@@ -45,7 +51,7 @@ export class OpenAIResponsesProvider implements TranslationProvider {
       input: JSON.stringify({ direction, glossary: context.glossary, approvedPrivateMemoryExamples: context.memory, segments }),
       text: { format: { type: "json_schema", name: "translation_batch", strict: true, schema: translationSchema } },
     });
-    const parsed = translationOutput.parse(JSON.parse(response.output_text));
+    const parsed = translationOutput.parse(parseProviderJson(response.output_text, "translation"));
     const expected = new Set(segments.map((segment) => segment.id));
     if (parsed.segments.length !== segments.length || new Set(parsed.segments.map((segment) => segment.id)).size !== expected.size || parsed.segments.some((segment) => !expected.has(segment.id) || !segment.translatedText.trim())) throw new Error("The translation provider returned an incomplete or duplicate segment set.");
     return parsed.segments;
@@ -64,7 +70,7 @@ export class OpenAIResponsesProvider implements TranslationProvider {
       input: [{ role: "user", content: [{ type: "input_text", text: `OCR this document: ${title}` }, media] }],
       text: { format: { type: "json_schema", name: "ocr_document", strict: true, schema: ocrSchema } },
     });
-    return ocrOutput.parse(JSON.parse(response.output_text)) as { pageCount: number; blocks: OcrBlock[] };
+    return ocrOutput.parse(parseProviderJson(response.output_text, "OCR")) as { pageCount: number; blocks: OcrBlock[] };
   }
 }
 

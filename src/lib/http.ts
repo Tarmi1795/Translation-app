@@ -32,7 +32,9 @@ export function apiError(error: unknown) {
 }
 
 export function parsePagination(url: URL) {
-  const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get("page_size") ?? 20)));
+  const rawPage = Number(url.searchParams.get("page") ?? 1);
+  const rawPageSize = Number(url.searchParams.get("page_size") ?? 20);
+  const page = Math.max(1, Number.isFinite(rawPage) ? Math.trunc(rawPage) : 1);
+  const pageSize = Math.min(100, Math.max(1, Number.isFinite(rawPageSize) ? Math.trunc(rawPageSize) : 20));
   return { page, pageSize, from: (page - 1) * pageSize, to: page * pageSize - 1 };
 }

@@ -41,9 +41,20 @@ export async function POST(request: Request) {
     const canonical = await extractCanonicalDocument({ bytes, mimeType, title, direction: input.direction, text: input.text });
     if (canonical.sourceWordCount < 1) throw new ApiError(400, "No readable source words were found.", "empty_source");
     const { data: previous } = await supabase.from("document_versions").select("version_number").eq("project_id", project.id).order("version_number", { ascending: false }).limit(1);
-    const versionNumber = Number(previous?.[0]?.version_number ?? 0) + 1;
-    const versionId = crypto.randomUUID();
-    const { error: versionError } = await supabase.from("document_versions").insert({ id: versionId, workspace_id: input.workspaceId, project_id: project.id, document_id: documentId, version_number: versionNumber, canonical_tree: canonical, branding: input.branding, layout_warnings: canonical.warnings, created_by: user.id });
+    // Two concurrent estimates can pick the same version number; retry once
+    // against the new maximum instead of failing the whole extraction.
+    let versionError: { code?: string; message: string } | null = null;
+    let versionId = crypto.randomUUID();
+    let versionNumber = Number(previous?.[0]?.version_number ?? 0) + 1;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const { error } = await supabase.from("document_versions").insert({ id: versionId, workspace_id: input.workspaceId, project_id: project.id, document_id: documentId, version_number: versionNumber, canonical_tree: canonical, branding: input.branding, layout_warnings: canonical.warnings, created_by: user.id });
+      if (!error) { versionError = null; break; }
+      versionError = error;
+      if (error.code !== "23505") break;
+      const { data: latest } = await supabase.from("document_versions").select("version_number").eq("project_id", project.id).order("version_number", { ascending: false }).limit(1);
+      versionNumber = Number(latest?.[0]?.version_number ?? versionNumber) + 1;
+      versionId = crypto.randomUUID();
+    }
     if (versionError) throw versionError;
     const nodeRows = canonical.nodes.map((node) => ({ id: node.id, workspace_id: input.workspaceId, project_id: project.id, version_id: versionId, node_key: node.id, node_type: node.type, page_number: node.page, node_order: node.order, source_text: node.sourceText, translated_text: node.translatedText, confidence: node.confidence, bounds: node.bounds, style: node.style, metadata: node.metadata ?? {} }));
     const segmentRows = canonical.nodes.filter((node) => node.sourceText.trim()).map((node, order) => ({ workspace_id: input.workspaceId, project_id: project.id, version_id: versionId, node_id: node.id, segment_order: order, source_text: node.sourceText, source_confidence: node.confidence, quality_flags: (node.confidence ?? 1) < 0.8 ? ["low_ocr_confidence"] : [], created_by: user.id }));

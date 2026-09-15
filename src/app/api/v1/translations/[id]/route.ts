@@ -14,6 +14,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const { data: job } = await supabase.from("translation_jobs").select("id,workspace_id,project_id,document_id,version_id,stage,workflow_run_id,segment_ids").eq("id", id).maybeSingle();
     if (!job) throw new ApiError(404, "Translation job not found.", "not_found");
     if (action === "cancel") {
+      if (!["queued", "validating", "extracting", "ocr_review", "reserving_credits", "retrieving_context", "translating", "quality_check", "reconstructing"].includes(job.stage)) {
+        throw new ApiError(409, `A ${job.stage} job can no longer be cancelled.`, "job_not_cancellable");
+      }
       await supabase.from("translation_jobs").update({ cancellation_requested_at: new Date().toISOString() }).eq("id", id);
       if (job.workflow_run_id) {
         try { await getRun(job.workflow_run_id).cancel(); }
@@ -32,9 +35,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (action === "retry_failed") {
       if (!["failed", "cancelled"].includes(job.stage)) throw new ApiError(409, "Only failed or cancelled jobs can be retried.", "job_not_retryable");
       if (!job.version_id) throw new ApiError(409, "The failed job has no document version.", "version_required");
-      const { data: remaining, error: remainingError } = await supabase.from("segments").select("id,source_text").eq("version_id", job.version_id).in("status", ["pending", "failed"]);
+      const { data: remaining, error: remainingError } = await supabase.from("segments").select("id,source_text,quality_flags").eq("version_id", job.version_id).in("status", ["pending", "failed"]);
       if (remainingError) throw remainingError;
       if (!remaining?.length) throw new ApiError(409, "No failed segments remain to retry.", "nothing_to_retry");
+      if (remaining.some((segment) => segment.quality_flags?.includes("low_ocr_confidence"))) throw new ApiError(409, "Review and save all low-confidence OCR segments before retrying.", "ocr_review_required");
       const remainingWords = remaining.reduce((sum, segment) => sum + countSourceWords(segment.source_text), 0);
       const { data: retryJob, error: createError } = await supabase.from("translation_jobs").insert({ workspace_id: job.workspace_id, project_id: job.project_id, document_id: job.document_id, version_id: job.version_id, created_by: (await requireUser()).id, idempotency_key: `retry:${job.id}:${crypto.randomUUID()}`, stage: "reserving_credits", progress: 15, source_word_count: remainingWords, total_segments: remaining.length, segment_ids: remaining.map((segment) => segment.id) }).select("id").single();
       if (createError) throw createError;

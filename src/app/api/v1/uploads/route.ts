@@ -1,5 +1,5 @@
 import { createUploadSchema } from "@/lib/api/schemas";
-import { requireWorkspaceRole } from "@/lib/auth";
+import { ApiError, requireWorkspaceRole } from "@/lib/auth";
 import { apiData, apiError } from "@/lib/http";
 import { createClient } from "@/lib/supabase/server";
 
@@ -8,7 +8,7 @@ function inputKind(fileName: string) {
   if (extension === "docx") return "docx";
   if (extension === "pdf") return "pdf";
   if (["jpg", "jpeg", "png"].includes(extension ?? "")) return "image";
-  throw new Error("Only PDF, DOCX, JPG, and PNG uploads are supported.");
+  throw new ApiError(400, "Only PDF, DOCX, JPG, and PNG uploads are supported.", "unsupported_file_type");
 }
 
 export async function POST(request: Request) {

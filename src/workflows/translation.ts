@@ -96,8 +96,11 @@ async function failWorkflow(jobId: string, message: string, cancelled: boolean, 
   "use step";
   const admin = createAdminClient();
   const stage = cancelled ? "cancelled" : "failed";
+  // Each write is independent: a failure must never prevent the credit
+  // release below, or the reservation strands the workspace balance forever.
   const { data: job } = await admin.from("translation_jobs").update({ stage, error_code: cancelled ? "cancelled" : "workflow_failed", error_message: message, completed_at: new Date().toISOString() }).eq("id", jobId).select("workspace_id,project_id").single();
-  await admin.rpc("commit_credits", { p_job_id: jobId, p_successful_words: successfulWords });
+  const { error: creditError } = await admin.rpc("commit_credits", { p_job_id: jobId, p_successful_words: successfulWords });
+  if (creditError) await admin.rpc("release_credits", { p_job_id: jobId, p_reason: creditError.message });
   if (job) {
     await Promise.all([
       admin.from("projects").update({ state: stage }).eq("id", job.project_id),
@@ -136,7 +139,10 @@ export async function translationWorkflow(jobId: string) {
     const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
       ? error.message
       : "Translation workflow failed.";
-    await failWorkflow(jobId, message, false, successfulWords);
+    // A failing failWorkflow must not mask the original error; the job row
+    // may keep its intermediate stage, but the workflow run still terminates.
+    try { await failWorkflow(jobId, message, false, successfulWords); }
+    catch (cleanupError) { console.error(`Cleanup after workflow failure for job ${jobId} also failed.`, cleanupError); }
     throw error;
   }
 }
