@@ -16,3 +16,6 @@ coverage/
 # Local prototype archive retained outside version control.
 /Unnamed Translation appi.zip
 tmp-test/
+
+.vercel
+.env*
