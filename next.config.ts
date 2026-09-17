@@ -8,7 +8,13 @@ const nextConfig: NextConfig = {
   // globalThis.pdfjsWorker (the fake worker) without bundler rewriting.
   serverExternalPackages: ["pdfjs-dist"],
   // The download route (not the collection) embeds the Arabic font at runtime.
-  outputFileTracingIncludes: { "/api/v1/exports/[id]/download": ["./public/fonts/*.ttf"] },
+  // PDF extraction runs pdfjs from the server bundle; its legacy build must be
+  // traced into the estimates lambda or the worker import fails on Vercel.
+  outputFileTracingIncludes: {
+    "/api/v1/exports/[id]/download": ["./public/fonts/*.ttf"],
+    "/api/v1/estimates": ["./node_modules/pdfjs-dist/legacy/build/**"],
+    "/api/v1/exports": ["./node_modules/pdfjs-dist/legacy/build/**"],
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",

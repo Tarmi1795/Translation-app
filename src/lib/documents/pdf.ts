@@ -1,5 +1,9 @@
 import type { CanonicalDocument, DocumentNode, LanguageDirection } from "@/types/domain";
 import { countDocumentWords } from "@/lib/words";
+// Static side-effect import: registers globalThis.pdfjsWorker so pdfjs can run
+// its fake worker inside the server bundle, where a dynamic workerSrc import
+// fails. Bundlers emit this as a regular module dependency.
+import "pdfjs-dist/legacy/build/pdf.worker.mjs";
 
 interface PdfTextItem { str: string; transform: number[]; width: number; height: number }
 
@@ -41,9 +45,6 @@ function mergeLinesIntoBlocks(lineBoxes: LineBox[]): Array<{ x: number; top: num
 
 export async function extractDigitalPdf(bytes: Uint8Array, title: string, direction: LanguageDirection): Promise<CanonicalDocument | null> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  // Registering the worker module on globalThis lets pdfjs run its fake
-  // worker in the server bundle, where a dynamic workerSrc import fails.
-  await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
   // pdfjs transfers ownership of the input buffer to its worker, which would
   // detach the caller's bytes before they are reused (pdf-lib, exports).
   const loadingTask = pdfjs.getDocument({ data: bytes.slice(), useSystemFonts: true, isEvalSupported: false });
