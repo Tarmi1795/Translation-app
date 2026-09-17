@@ -104,7 +104,9 @@ export class ZaiChatProvider implements TranslationProvider {
     const env = getServerEnv();
     this.client = new OpenAI({
       apiKey: env.ZAI_API_KEY,
-      baseURL: "https://api.z.ai/api/paas/v4",
+      // GLM Coding Plans are served from the coding endpoint; standard API
+      // balance applies to api/paas/v4. ZAI_BASE_URL selects between them.
+      baseURL: env.ZAI_BASE_URL ?? "https://api.z.ai/api/paas/v4",
       timeout: PROVIDER_TIMEOUT_MS,
       maxRetries: 1,
     });
@@ -117,11 +119,14 @@ export class ZaiChatProvider implements TranslationProvider {
       model,
       temperature: 0.2,
       response_format: { type: "json_object" },
+      // GLM reasoning burns latency before the JSON answer; extraction and
+      // translation do not need it.
+      thinking: { type: "disabled" },
       messages: [
         { role: "system", content: `${system}\nAnswer with a single JSON object only. No markdown fences, no commentary.` },
         { role: "user", content: user as never },
       ],
-    });
+    } as never);
     return parseProviderJson(response.choices?.[0]?.message?.content ?? undefined, "provider");
   }
 
