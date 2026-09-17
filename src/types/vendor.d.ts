@@ -11,3 +11,8 @@ declare module "bidi-js" {
   interface Bidi { getEmbeddingLevels(text: string, direction?: "ltr" | "rtl"): EmbeddingLevels; getReorderedString(text: string, levels: EmbeddingLevels): string }
   export default function bidiFactory(): Bidi;
 }
+
+// pdfjs worker module registers globalThis.pdfjsWorker when imported.
+declare module "pdfjs-dist/build/pdf.worker.mjs";
+
+interface Window { pdfjsWorker?: { WorkerMessageHandler: unknown } }
