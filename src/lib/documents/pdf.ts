@@ -44,6 +44,13 @@ function mergeLinesIntoBlocks(lineBoxes: LineBox[]): Array<{ x: number; top: num
 }
 
 export async function extractDigitalPdf(bytes: Uint8Array, title: string, direction: LanguageDirection): Promise<CanonicalDocument | null> {
+  // pdfjs v5 evaluates DOM globals at import time; serverless Node lacks them.
+  if (!globalThis.DOMMatrix || !globalThis.ImageData || !globalThis.Path2D) {
+    const canvas = await import("@napi-rs/canvas");
+    globalThis.DOMMatrix ??= canvas.DOMMatrix as unknown as typeof DOMMatrix;
+    globalThis.ImageData ??= canvas.ImageData as unknown as typeof ImageData;
+    globalThis.Path2D ??= canvas.Path2D as unknown as typeof Path2D;
+  }
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   // pdfjs transfers ownership of the input buffer to its worker, which would
   // detach the caller's bytes before they are reused (pdf-lib, exports).
