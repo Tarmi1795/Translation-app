@@ -1,13 +1,23 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { EditorWorkspace } from "@/components/editor-workspace";
+import { ProjectSkeleton } from "@/components/skeletons";
 import { hasSupabaseEnv } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceContext } from "@/lib/workspace-context";
 import type { BrandingSelection, CanonicalDocument, JobStage, LanguageDirection, LayoutWarning } from "@/types/domain";
 
-export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   if (!hasSupabaseEnv()) notFound();
+  return (
+    <Suspense fallback={<ProjectSkeleton />}>
+      <ProjectBody projectId={params} />
+    </Suspense>
+  );
+}
+
+async function ProjectBody({ projectId }: { projectId: Promise<{ id: string }> }) {
+  const { id } = await projectId;
   const { activeWorkspace } = await getWorkspaceContext();
   if (!activeWorkspace) notFound();
   const supabase = await createClient();

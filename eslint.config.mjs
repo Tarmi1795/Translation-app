@@ -5,5 +5,5 @@ import nextTypeScript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextVitals,
   ...nextTypeScript,
-  globalIgnores([".next/**", "node_modules/**", "supabase/.temp/**", "src/app/.well-known/workflow/**", "src/types/openapi.generated.ts"]),
+  globalIgnores([".next/**", "node_modules/**", "supabase/.temp/**", "src/app/.well-known/workflow/**", "src/types/openapi.generated.ts", "public/**", "tmp-test/**"]),
 ]);

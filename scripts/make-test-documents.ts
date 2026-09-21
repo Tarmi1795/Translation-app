@@ -36,7 +36,7 @@ async function main() {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  let page = pdf.addPage([595.28, 841.89]);
+  const page = pdf.addPage([595.28, 841.89]);
   const lines: Array<[string, typeof font, number]> = [
     ["QUARTERLY PROJECT STATUS REPORT", bold, 16],
     ["Prepared for: Gulf Logistics LLC", font, 11],

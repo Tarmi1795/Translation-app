@@ -131,7 +131,6 @@ export async function translationWorkflow(jobId: string) {
     for (let index = 0; index < payload.segments.length; index += batchSize) {
       batches.push(payload.segments.slice(index, index + batchSize).map((segment, localIndex) => ({ id: segment.id, sourceText: segment.source_text, contextBefore: payload.segments[index + localIndex - 1]?.source_text, contextAfter: payload.segments[index + localIndex + 1]?.source_text })));
     }
-    let successfulWords = 0;
     let completed = 0;
     for (let offset = 0; offset < batches.length; offset += concurrency) {
       if (await checkCancellation(jobId)) {

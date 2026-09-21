@@ -1,10 +1,20 @@
+import { Suspense } from "react";
 import { TeamManager } from "@/components/team-manager";
+import { TeamSkeleton } from "@/components/skeletons";
 import { hasSupabaseEnv } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceContext } from "@/lib/workspace-context";
 
-export default async function TeamPage() {
+export default function TeamPage() {
   if (!hasSupabaseEnv()) return <TeamManager members={[]} />;
+  return (
+    <Suspense fallback={<TeamSkeleton />}>
+      <TeamBody />
+    </Suspense>
+  );
+}
+
+async function TeamBody() {
   const { activeWorkspace } = await getWorkspaceContext();
   if (!activeWorkspace) return <TeamManager members={[]} />;
   const supabase = await createClient();

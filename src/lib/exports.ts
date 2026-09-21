@@ -124,7 +124,6 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
       fitted.lines.forEach((line, index) => drawLine(pdf.getPage(b.page - 1), line, b.x, b.y + index * fitted.lineHeight, b.width, fitted.size, node.style?.alignment));
       if (fitted.size < (node.style?.fontSize ?? 11) - 0.5) { reduced.push(node.order + 1); smallestReduced = Math.min(smallestReduced, fitted.size); }
     }
-    const overflowTotal = [...movedByPage.values()].reduce((sum, count) => sum + count, 0);
     if (noPosition.length) warnings.push({ code: "material_reflow", page: 1, severity: "warning", message: `${noPosition.length} segment${noPosition.length === 1 ? "" : "s"} (numbers ${noPosition.slice(0, 8).join(", ")}${noPosition.length > 8 ? "…" : ""}) had no usable position — their translations are on continuation pages.` });
     for (const [page, count] of [...movedByPage.entries()].sort((a, b) => a[0] - b[0])) {
       warnings.push({ code: "overflow", page, severity: "warning", message: `${count} segment${count === 1 ? "" : "s"} on page ${page} did not fit legibly (marked [n] in place). Full translations are on the continuation pages.` });

@@ -53,7 +53,11 @@ export function AppShell({
   // Optimistic highlight: the clicked menu item activates immediately instead
   // of waiting ~1s for the round trip to the server region.
   const [pendingHref, setPendingHref] = useState<string | null>(null);
-  useEffect(() => { setPendingHref(null); }, [pathname]);
+  const [renderedPathname, setRenderedPathname] = useState(pathname);
+  if (renderedPathname !== pathname) {
+    setRenderedPathname(pathname);
+    setPendingHref(null);
+  }
   const currentPage = navigation.find(({ href }) => href === "/app" ? pathname === href : pathname.startsWith(href))?.label ?? (pathname.startsWith("/app/admin") ? "Beta administration" : "Workspace");
   const creditPercent = Math.min(100, Math.max(0, (creditBalance / Math.max(5000, creditBalance)) * 100));
 

@@ -1,10 +1,20 @@
+import { Suspense } from "react";
 import { GlossaryManager } from "@/components/glossary-manager";
+import { GlossarySkeleton } from "@/components/skeletons";
 import { hasSupabaseEnv } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 import { getWorkspaceContext } from "@/lib/workspace-context";
 
-export default async function GlossaryPage() {
+export default function GlossaryPage() {
   if (!hasSupabaseEnv()) return <GlossaryManager initialTerms={[]} memoryCount={0} />;
+  return (
+    <Suspense fallback={<GlossarySkeleton />}>
+      <GlossaryBody />
+    </Suspense>
+  );
+}
+
+async function GlossaryBody() {
   const { activeWorkspace } = await getWorkspaceContext();
   if (!activeWorkspace) return <GlossaryManager initialTerms={[]} memoryCount={0} />;
   const supabase = await createClient();
