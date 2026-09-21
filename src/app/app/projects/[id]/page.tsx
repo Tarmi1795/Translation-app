@@ -29,15 +29,27 @@ async function ProjectBody({ projectId }: { projectId: Promise<{ id: string }> }
   if (!project) notFound();
   if (versionError) throw versionError;
   const version = versions?.[0];
-  const { data: segments, error: segmentError } = version ? await supabase.from("segments").select("id,source_text,translated_text,segment_order,status,quality_flags,source_confidence").eq("version_id", version.id).order("segment_order") : { data: [], error: null };
+  const { data: segments, error: segmentError } = version ? await supabase.from("segments").select("id,node_id,source_text,translated_text,segment_order,status,quality_flags,source_confidence").eq("version_id", version.id).order("segment_order") : { data: [], error: null };
   if (segmentError) throw segmentError;
   const canonical = version?.canonical_tree as CanonicalDocument | undefined;
   const job = jobs?.[0];
+  // Segment positions let the preview act as a WYSIWYG surface: overlays are
+  // pinned to the rendered pages wherever the source extraction had bounds.
+  const nodeById = new Map((canonical?.nodes ?? []).map((node) => [node.id, node]));
+  const segmentLayouts: Record<string, { page: number; x: number; y: number; width: number; height: number; fontSize: number }> = {};
+  for (const segment of segments ?? []) {
+    if (!segment.node_id) continue;
+    const node = nodeById.get(segment.node_id);
+    const bounds = node?.bounds;
+    if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) continue;
+    segmentLayouts[segment.id] = { page: bounds.page, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fontSize: node?.style?.fontSize ?? 11 };
+  }
   return (
     <EditorWorkspace
       key={`${version?.id}:${job?.stage === "completed" ? "completed" : "working"}`}
       versionId={version?.id}
       sourceMimeType={canonical?.mimeType ?? "text/plain"}
+      segmentLayouts={segmentLayouts}
       branding={(version?.branding ?? []) as BrandingSelection[]}
       sourceHasLetterhead={canonical?.sourceHasLetterhead ?? false}
       project={{ id: project.id, workspaceId: project.workspace_id, title: project.title, state: project.state, direction: project.direction as LanguageDirection, sourceWordCount: Number(project.source_word_count) }}
