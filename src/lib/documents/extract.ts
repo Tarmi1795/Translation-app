@@ -7,8 +7,44 @@ import { getTranslationProvider } from "@/lib/openai/responses-provider";
 import { PDFDocument } from "pdf-lib";
 import type { OcrBlock } from "@/lib/openai/provider";
 
+// Providers cap the rendered page payload they will accept; larger pages are
+// rasterized down before OCR instead of failing the whole extraction.
+const MAX_OCR_PAGE_BYTES = 4 * 1024 * 1024;
+
 function ocrNodes(blocks: OcrBlock[], page: number, width: number, height: number, direction: LanguageDirection) {
   return blocks.map((block) => ({ id: crypto.randomUUID(), type: block.type, sourceText: block.text, page, order: block.order, confidence: Math.min(block.confidence, block.bounds ? 0.95 : 0.75), bounds: block.bounds ? { page, x: block.bounds.x * width / 1000, y: block.bounds.y * height / 1000, width: block.bounds.width * width / 1000, height: block.bounds.height * height / 1000 } : undefined, style: { direction: direction === "ar-en" ? "rtl" as const : "ltr" as const }, metadata: { extraction: "openai_vision", ocrBlockId: block.id } }));
+}
+
+// One unreadable page (huge embedded images, exotic encodings) must not kill
+// the extraction: record it as a warning and keep the remaining pages.
+async function ocrPageSafe(pageBytes: Uint8Array, mimeType: string, title: string, page: number): Promise<OcrBlock[]> {
+  try {
+    const result = await getTranslationProvider().ocrDocument(pageBytes, mimeType, `${title} - page ${page}`);
+    return result.blocks;
+  } catch (error) {
+    console.warn(`OCR failed for page ${page} of ${title}:`, error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+async function rasterizePage(source: PDFDocument, pageIndex: number, targetBytes: number): Promise<Uint8Array | null> {
+  // Only when the vector page is too heavy: re-encode via pdfjs at print scale.
+  if (targetBytes <= MAX_OCR_PAGE_BYTES) return null;
+  try {
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const sourceBytes = await source.save();
+    const doc = await pdfjs.getDocument({ data: sourceBytes.slice(), isOffscreenCanvasSupported: false, useSystemFonts: true, isEvalSupported: false }).promise;
+    const page = await doc.getPage(pageIndex + 1);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const { createCanvas } = await import("@napi-rs/canvas");
+    const canvas = createCanvas(Math.round(viewport.width), Math.round(viewport.height));
+    await page.render({ canvas: canvas as unknown as HTMLCanvasElement, viewport }).promise;
+    await doc.destroy();
+    return await canvas.encode("jpeg", 80);
+  } catch (error) {
+    console.warn(`Rasterizing page ${pageIndex + 1} failed:`, error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 export async function extractCanonicalDocument({ bytes, mimeType, title, direction, text }: { bytes?: Uint8Array; mimeType: string; title: string; direction: LanguageDirection; text?: string }): Promise<CanonicalDocument> {
@@ -19,14 +55,28 @@ export async function extractCanonicalDocument({ bytes, mimeType, title, directi
     const digital = await extractDigitalPdf(bytes, title, direction);
     if (digital) {
       const source = await PDFDocument.load(bytes);
-      for (let page = 1; page <= digital.pageCount; page++) {
-        if (digital.nodes.some((node) => node.page === page)) continue;
+      // OCR the image-only pages in parallel waves: sequential per-page calls
+      // make multi-page scans exceed the function time budget.
+      const ocrConcurrency = 3;
+      const pendingPages: number[] = [];
+      for (let page = 1; page <= digital.pageCount; page += 1) {
+        if (!digital.nodes.some((node) => node.page === page)) pendingPages.push(page);
+      }
+      const handlePage = async (page: number) => {
         const single = await PDFDocument.create();
         single.addPage((await single.copyPages(source, [page - 1]))[0]);
-        const result = await getTranslationProvider().ocrDocument(await single.save(), mimeType, `${title} - page ${page}`);
+        let pageBytes = await single.save();
+        const raster = await rasterizePage(source, page - 1, pageBytes.byteLength);
+        if (raster) pageBytes = raster;
+        const blocks = pageBytes.length > MAX_OCR_PAGE_BYTES
+          ? []
+          : await ocrPageSafe(pageBytes, raster ? "image/jpeg" : mimeType, title, page);
         const size = digital.pages![page - 1];
-        digital.nodes.push(...ocrNodes(result.blocks, page, size.width, size.height, direction));
-        digital.warnings.push({ code: "ocr_uncertain", page, severity: "warning", message: result.blocks.length ? "Scanned page: OCR text and approximate placement require review." : "No text was detected on this page. The original page is preserved; verify it contains no untranslated text." });
+        digital.nodes.push(...ocrNodes(blocks, page, size.width, size.height, direction));
+        digital.warnings.push({ code: "ocr_uncertain", page, severity: "warning", message: blocks.length ? "Scanned page: OCR text and approximate placement require review." : "No text could be read from this page. The original page is preserved in the export; enter any missing text in Text corrections." });
+      };
+      for (let offset = 0; offset < pendingPages.length; offset += ocrConcurrency) {
+        await Promise.all(pendingPages.slice(offset, offset + ocrConcurrency).map((page) => handlePage(page)));
       }
       digital.nodes.sort((a, b) => a.page - b.page || a.order - b.order).forEach((node, order) => { node.order = order; });
       digital.sourceWordCount = countDocumentWords(digital.nodes.map((node) => node.sourceText));
