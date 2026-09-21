@@ -35,9 +35,11 @@ async function ocrPageSafe(pageBytes: Uint8Array, mimeType: string, title: strin
   return [];
 }
 
-async function rasterizePage(source: PDFDocument, pageIndex: number, targetBytes: number): Promise<Uint8Array | null> {
-  // Only when the vector page is too heavy: re-encode via pdfjs at print scale.
-  if (targetBytes <= MAX_OCR_PAGE_BYTES) return null;
+async function rasterizePage(source: PDFDocument, pageIndex: number, force = false): Promise<Uint8Array | null> {
+  // Re-encode the page via pdfjs at print scale. Used for oversized vector
+  // pages and as the fallback when the provider rejects a page's native
+  // image encodings (fax/CCITT, exotic JPEG) — a plain JPEG always works.
+  if (!force) return null;
   try {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const sourceBytes = await source.save();
@@ -74,12 +76,13 @@ export async function extractCanonicalDocument({ bytes, mimeType, title, directi
       const handlePage = async (page: number) => {
         const single = await PDFDocument.create();
         single.addPage((await single.copyPages(source, [page - 1]))[0]);
-        let pageBytes = await single.save();
-        const raster = await rasterizePage(source, page - 1, pageBytes.byteLength);
-        if (raster) pageBytes = raster;
-        const blocks = pageBytes.length > MAX_OCR_PAGE_BYTES
-          ? []
-          : await ocrPageSafe(pageBytes, raster ? "image/jpeg" : mimeType, title, page);
+        const pageBytes = await single.save();
+        let blocks: OcrBlock[] = [];
+        if (pageBytes.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(pageBytes, mimeType, title, page);
+        if (!blocks.length) {
+          const raster = await rasterizePage(source, page - 1, true);
+          if (raster && raster.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(raster, "image/jpeg", title, page);
+        }
         const size = digital.pages![page - 1];
         digital.nodes.push(...ocrNodes(blocks, page, size.width, size.height, direction));
         digital.warnings.push({ code: "ocr_uncertain", page, severity: "warning", message: blocks.length ? "Scanned page: OCR text and approximate placement require review." : "No text could be read from this page. The original page is preserved in the export; enter any missing text in Text corrections." });
