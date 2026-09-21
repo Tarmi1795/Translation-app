@@ -119,7 +119,8 @@ export async function translationWorkflow(jobId: string) {
   "use workflow";
   let successfulWords = 0;
   try {
-    await updateStage(jobId, "retrieving_context", 25, "Loading glossary and private translation memory.");
+    // Each workflow step costs a runtime round trip (~3-5s), so the pipeline
+    // deliberately keeps the step count low: load, translate in waves, finish.
     const payload = await loadWorkflowPayload(jobId);
     await updateStage(jobId, "translating", 35, "Translating contextual segment batches.");
     // Larger batches cut provider round trips; a small wave of parallel
@@ -144,8 +145,6 @@ export async function translationWorkflow(jobId: string) {
       }
       await updateJobProgress(jobId, completed, payload.segments.length);
     }
-    await updateStage(jobId, "quality_check", 84, "Checking names, numbers, terminology, and missing content.");
-    await updateStage(jobId, "reconstructing", 92, "Preparing layout-aware exports and warnings.");
     await finalizeDocument(jobId, payload, successfulWords);
     return { status: "completed" as const, successfulWords };
   } catch (error) {

@@ -129,7 +129,7 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
     for (const [page, count] of [...movedByPage.entries()].sort((a, b) => a[0] - b[0])) {
       warnings.push({ code: "overflow", page, severity: "warning", message: `${count} segment${count === 1 ? "" : "s"} on page ${page} did not fit legibly (marked [n] in place). Full translations are on the continuation pages.` });
     }
-    if (reduced.length) warnings.push({ code: "material_reflow", page: 1, severity: "info", message: `${reduced.length} segment${reduced.length === 1 ? "" : "s"} were reduced in size to fit (smallest ${smallestReduced.toFixed(1)} pt).` });
+    if (reduced.length) warnings.push({ code: "material_reflow", page: 1, severity: "info", message: `${reduced.length} segment${reduced.length === 1 ? " was" : "s were"} reduced in size to fit (smallest ${smallestReduced.toFixed(1)} pt).` });
     warnings.push({ code: "font_substitution", page: 1, severity: "info", message: "Translated text uses an embedded Arabic-capable font; check coloured backgrounds and table rules in the PDF." });
   } else {
     deferred.push(...document.nodes.filter((node) => node.sourceText.trim()));
