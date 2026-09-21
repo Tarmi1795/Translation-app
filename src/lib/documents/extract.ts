@@ -4,7 +4,8 @@ import { extractDocx } from "@/lib/documents/docx";
 import { extractDigitalPdf } from "@/lib/documents/pdf";
 import { extractTextDocument } from "@/lib/documents/text";
 import { getTranslationProvider } from "@/lib/openai/responses-provider";
-import { PDFDocument } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, type PDFPage } from "pdf-lib";
+import { inflateSync } from "node:zlib";
 import type { OcrBlock } from "@/lib/openai/provider";
 
 // Providers cap the rendered page payload they will accept; larger pages are
@@ -35,24 +36,34 @@ async function ocrPageSafe(pageBytes: Uint8Array, mimeType: string, title: strin
   return [];
 }
 
-async function rasterizePage(source: PDFDocument, pageIndex: number, force = false): Promise<Uint8Array | null> {
-  // Re-encode the page via pdfjs at print scale. Used for oversized vector
-  // pages and as the fallback when the provider rejects a page's native
-  // image encodings (fax/CCITT, exotic JPEG) — a plain JPEG always works.
-  if (!force) return null;
+// Scanned pages embed their scan as an image XObject. DCTDecode streams ARE
+// JPEG bytes (FlateDecode-wrapped ones just need zlib), so when the provider
+// rejects the vector page, its largest embedded image is sent directly — no
+// rasterizer needed. CCITT/fax images cannot be converted here.
+function embeddedPageImage(page: PDFPage): Uint8Array | null {
   try {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const sourceBytes = await source.save();
-    const doc = await pdfjs.getDocument({ data: sourceBytes.slice(), isOffscreenCanvasSupported: false, useSystemFonts: true, isEvalSupported: false }).promise;
-    const page = await doc.getPage(pageIndex + 1);
-    const viewport = page.getViewport({ scale: 1.5 });
-    const { createCanvas } = await import("@napi-rs/canvas");
-    const canvas = createCanvas(Math.round(viewport.width), Math.round(viewport.height));
-    await page.render({ canvas: canvas as unknown as HTMLCanvasElement, viewport }).promise;
-    await doc.destroy();
-    return await canvas.encode("jpeg", 80);
-  } catch (error) {
-    console.warn(`Rasterizing page ${pageIndex + 1} failed:`, error instanceof Error ? error.message : error);
+    const resources = page.node.Resources();
+    const xobject = resources?.lookup(PDFName.of("XObject"), PDFDict);
+    if (!xobject) return null;
+    let best: { area: number; jpeg: Uint8Array } | null = null;
+    for (const [key] of xobject.entries()) {
+      const candidate = xobject.lookup(key);
+      if (!(candidate instanceof PDFRawStream)) continue;
+      const stream = candidate;
+      if (String(stream.dict.get(PDFName.of("Subtype"))) !== "/Image") continue;
+      const width = Number(stream.dict.get(PDFName.of("Width")));
+      const height = Number(stream.dict.get(PDFName.of("Height")));
+      const filterRaw = stream.dict.get(PDFName.of("Filter"));
+      const filters = filterRaw instanceof PDFArray ? filterRaw.asArray().map(String) : [String(filterRaw)];
+      let jpeg: Uint8Array | null = null;
+      if (filters.length === 1 && filters[0] === "/DCTDecode") jpeg = stream.contents;
+      else if (filters.length === 2 && filters[0] === "/FlateDecode" && filters[1] === "/DCTDecode") {
+        try { jpeg = new Uint8Array(inflateSync(Buffer.from(stream.contents))); } catch { jpeg = null; }
+      }
+      if (jpeg && width * height > (best?.area ?? 0)) best = { area: width * height, jpeg };
+    }
+    return best?.jpeg ?? null;
+  } catch {
     return null;
   }
 }
@@ -80,8 +91,8 @@ export async function extractCanonicalDocument({ bytes, mimeType, title, directi
         let blocks: OcrBlock[] = [];
         if (pageBytes.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(pageBytes, mimeType, title, page);
         if (!blocks.length) {
-          const raster = await rasterizePage(source, page - 1, true);
-          if (raster && raster.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(raster, "image/jpeg", title, page);
+          const embedded = embeddedPageImage(source.getPage(page - 1));
+          if (embedded && embedded.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(embedded, "image/jpeg", title, page);
         }
         const size = digital.pages![page - 1];
         digital.nodes.push(...ocrNodes(blocks, page, size.width, size.height, direction));
