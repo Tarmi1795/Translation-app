@@ -52,21 +52,27 @@ async function checkCancellation(jobId: string) {
   return Boolean(data?.cancellation_requested_at);
 }
 
-async function translateBatchStep(jobId: string, direction: LanguageDirection, batch: TranslationInputSegment[], context: TranslationContext, completedBefore: number, total: number) {
+async function translateBatchStep(jobId: string, direction: LanguageDirection, batch: TranslationInputSegment[], context: TranslationContext) {
   "use step";
   const provider = getTranslationProvider();
   const translated = await provider.translateBatch(direction, batch, context);
   const admin = createAdminClient();
-  for (const result of translated) {
+  // Segments are independent rows: write them concurrently instead of paying
+  // one round trip each.
+  await Promise.all(translated.map(async (result) => {
     const source = batch.find((segment) => segment.id === result.id)?.sourceText ?? "";
     const flags = validateTranslation(source, result.translatedText);
     const { error } = await admin.from("segments").update({ translated_text: result.translatedText, status: "translated", quality_flags: flags }).eq("id", result.id);
     if (error) throw error;
-  }
-  const completed = completedBefore + translated.length;
+  }));
+  return { completed: translated.length, successfulWords: batch.reduce((sum, segment) => sum + countSourceWords(segment.sourceText), 0) };
+}
+
+async function updateJobProgress(jobId: string, completed: number, total: number) {
+  "use step";
+  const admin = createAdminClient();
   const progress = 35 + (completed / Math.max(1, total)) * 45;
   await admin.from("translation_jobs").update({ completed_segments: completed, progress }).eq("id", jobId);
-  return { completed, successfulWords: batch.reduce((sum, segment) => sum + countSourceWords(segment.sourceText), 0) };
 }
 
 async function finalizeDocument(jobId: string, payload: WorkflowPayload, successfulWords: number) {
@@ -116,18 +122,27 @@ export async function translationWorkflow(jobId: string) {
     await updateStage(jobId, "retrieving_context", 25, "Loading glossary and private translation memory.");
     const payload = await loadWorkflowPayload(jobId);
     await updateStage(jobId, "translating", 35, "Translating contextual segment batches.");
-    const batchSize = 12;
-    let completed = 0;
+    // Larger batches cut provider round trips; a small wave of parallel
+    // batches cuts wall-clock time without hammering the provider.
+    const batchSize = 16;
+    const concurrency = 3;
+    const batches: TranslationInputSegment[][] = [];
     for (let index = 0; index < payload.segments.length; index += batchSize) {
+      batches.push(payload.segments.slice(index, index + batchSize).map((segment, localIndex) => ({ id: segment.id, sourceText: segment.source_text, contextBefore: payload.segments[index + localIndex - 1]?.source_text, contextAfter: payload.segments[index + localIndex + 1]?.source_text })));
+    }
+    let successfulWords = 0;
+    let completed = 0;
+    for (let offset = 0; offset < batches.length; offset += concurrency) {
       if (await checkCancellation(jobId)) {
         await failWorkflow(jobId, "Translation cancelled by the user.", true, successfulWords);
         return { status: "cancelled" as const };
       }
-      const slice = payload.segments.slice(index, index + batchSize);
-      const batch = slice.map((segment, localIndex) => ({ id: segment.id, sourceText: segment.source_text, contextBefore: slice[localIndex - 1]?.source_text, contextAfter: slice[localIndex + 1]?.source_text }));
-      const result = await translateBatchStep(jobId, payload.project.direction, batch, payload.context, completed, payload.segments.length);
-      completed = result.completed;
-      successfulWords += result.successfulWords;
+      const results = await Promise.all(batches.slice(offset, offset + concurrency).map((batch) => translateBatchStep(jobId, payload.project.direction, batch, payload.context)));
+      for (const result of results) {
+        successfulWords += result.successfulWords;
+        completed += result.completed;
+      }
+      await updateJobProgress(jobId, completed, payload.segments.length);
     }
     await updateStage(jobId, "quality_check", 84, "Checking names, numbers, terminology, and missing content.");
     await updateStage(jobId, "reconstructing", 92, "Preparing layout-aware exports and warnings.");

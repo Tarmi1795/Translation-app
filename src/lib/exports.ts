@@ -91,14 +91,20 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
   if (preservesSource) {
     // Erase all source regions before drawing translated text, so neighbouring
     // source masks cannot erase an earlier translation.
+    // Collect placement outcomes and emit a compact summary instead of one
+    // warning per segment — dense documents otherwise flood the review list.
+    const movedByPage = new Map<number, number>();
+    const noPosition: number[] = [];
+    const reduced: number[] = [];
+    let smallestReduced = Number.POSITIVE_INFINITY;
     for (const node of document.nodes.filter((node) => node.sourceText.trim())) {
       const b = node.bounds;
       if (!b || ![b.x,b.y,b.width,b.height].every(Number.isFinite) || b.width <= 0 || b.height <= 0 || b.page < 1 || b.page > pdf.getPageCount()) {
-        deferred.push(node); warnings.push({ code: "material_reflow", page: node.page, nodeId: node.id, severity: "warning", message: "Text has no reliable position. Its complete translation is on a continuation page; the source region is retained." }); continue;
+        deferred.push(node); noPosition.push(node.order + 1); continue;
       }
       const page = pdf.getPage(b.page - 1);
       if (page.getRotation().angle !== 0 || b.x < 0 || b.y < 0 || b.x + b.width > page.getWidth() + 1 || b.y + b.height > page.getHeight() + 1) {
-        deferred.push(node); warnings.push({ code: "material_reflow", page: node.page, nodeId: node.id, severity: "warning", message: "Rotated or out-of-page text was moved to a continuation page for safe review." }); continue;
+        deferred.push(node); noPosition.push(node.order + 1); continue;
       }
       page.drawRectangle({ x: b.x, y: page.getHeight() - b.y - b.height, width: b.width, height: b.height, color: rgb(1,1,1) });
     }
@@ -109,16 +115,22 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
       const collision = placed.some((box) => box.page === b.page && intersects(box, b));
       if (!fitted || collision) {
         deferred.push(node);
-        warnings.push({ code: collision ? "overlap" : "overflow", page: b.page, nodeId: node.id, severity: "warning", message: `Segment ${node.order + 1} could not fit legibly. Its full translation is on a continuation page.` });
+        movedByPage.set(b.page, (movedByPage.get(b.page) ?? 0) + 1);
         const reference = `[${node.order + 1}]`;
         if (b.width >= measure(reference, 9) && b.height >= 12) drawLine(pdf.getPage(b.page - 1), reference, b.x, b.y, b.width, 9);
         continue;
       }
       placed.push(b);
       fitted.lines.forEach((line, index) => drawLine(pdf.getPage(b.page - 1), line, b.x, b.y + index * fitted.lineHeight, b.width, fitted.size, node.style?.alignment));
-      if (fitted.size < (node.style?.fontSize ?? 11) - 0.5) warnings.push({ code: "material_reflow", page: b.page, nodeId: node.id, severity: "info", message: `Text reduced to ${fitted.size} pt to fit its original region.` });
+      if (fitted.size < (node.style?.fontSize ?? 11) - 0.5) { reduced.push(node.order + 1); smallestReduced = Math.min(smallestReduced, fitted.size); }
     }
-    warnings.push({ code: "font_substitution", page: 1, severity: "warning", message: "Translated text uses an embedded Arabic-capable font. White text masks may alter coloured backgrounds or table rules; inspect the PDF." });
+    const overflowTotal = [...movedByPage.values()].reduce((sum, count) => sum + count, 0);
+    if (noPosition.length) warnings.push({ code: "material_reflow", page: 1, severity: "warning", message: `${noPosition.length} segment${noPosition.length === 1 ? "" : "s"} (numbers ${noPosition.slice(0, 8).join(", ")}${noPosition.length > 8 ? "…" : ""}) had no usable position — their translations are on continuation pages.` });
+    for (const [page, count] of [...movedByPage.entries()].sort((a, b) => a[0] - b[0])) {
+      warnings.push({ code: "overflow", page, severity: "warning", message: `${count} segment${count === 1 ? "" : "s"} on page ${page} did not fit legibly (marked [n] in place). Full translations are on the continuation pages.` });
+    }
+    if (reduced.length) warnings.push({ code: "material_reflow", page: 1, severity: "info", message: `${reduced.length} segment${reduced.length === 1 ? "" : "s"} were reduced in size to fit (smallest ${smallestReduced.toFixed(1)} pt).` });
+    warnings.push({ code: "font_substitution", page: 1, severity: "info", message: "Translated text uses an embedded Arabic-capable font; check coloured backgrounds and table rules in the PDF." });
   } else {
     deferred.push(...document.nodes.filter((node) => node.sourceText.trim()));
     if (document.mimeType !== "text/plain") warnings.push({ code: "formatting_approximate", page: 1, severity: "warning", message: "PDF is a readable reconstruction, not a 1:1 Word rendering. Original tables, images, headers and margins are best preserved in the editable Word download." });

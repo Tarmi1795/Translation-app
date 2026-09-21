@@ -42,7 +42,7 @@ export class OpenAIResponsesProvider implements TranslationProvider {
     this.client = new OpenAI({
       apiKey: useOpenRouter ? env.OPENROUTER_API_KEY : env.OPENAI_API_KEY,
       timeout: PROVIDER_TIMEOUT_MS,
-      maxRetries: 1,
+      maxRetries: 2,
       ...(useOpenRouter
         ? {
             baseURL: "https://openrouter.ai/api/v1",
@@ -108,7 +108,7 @@ export class ZaiChatProvider implements TranslationProvider {
       // balance applies to api/paas/v4. ZAI_BASE_URL selects between them.
       baseURL: env.ZAI_BASE_URL ?? "https://api.z.ai/api/paas/v4",
       timeout: PROVIDER_TIMEOUT_MS,
-      maxRetries: 1,
+      maxRetries: 2,
     });
     this.translationModel = env.ZAI_MODEL_TRANSLATION;
     this.ocrModel = env.ZAI_MODEL_OCR;
