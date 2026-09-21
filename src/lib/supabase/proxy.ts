@@ -1,16 +1,23 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { hasSupabaseEnv } from "@/lib/env";
+import { readAccessToken, tokenTimeLeft } from "@/lib/auth-token";
+
+// Refresh only when the access token is near expiry; otherwise the request
+// proceeds without any auth round trip (verification happens in the route).
+const REFRESH_WINDOW_MS = 10 * 60 * 1000;
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
   if (!hasSupabaseEnv()) return response;
 
-  // Only run the auth round-trip when a session cookie exists; anonymous
-  // requests (landing, assets, most API 401s) otherwise pay a full
+  // Only run the auth round-trip when a session cookie exists and is close to
+  // expiry; anonymous or freshly-refreshed requests otherwise pay a full
   // Supabase verification call for nothing.
-  const hasSessionCookie = request.cookies.getAll().some((cookie) => cookie.name.includes("-auth-token"));
-  if (!hasSessionCookie) return response;
+  const token = readAccessToken(request.cookies.getAll());
+  if (!token) return response;
+  const timeLeft = tokenTimeLeft(token);
+  if (timeLeft !== null && timeLeft > REFRESH_WINDOW_MS) return response;
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

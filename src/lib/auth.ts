@@ -1,5 +1,8 @@
 import { cache } from "react";
+import { cookies } from "next/headers";
+import type { User } from "@supabase/supabase-js";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { readAccessToken, verifyAuthTokenLocally } from "@/lib/auth-token";
 import { isPlatformAdminEmail } from "@/lib/env";
 import type { WorkspaceRole } from "@/types/domain";
 
@@ -13,7 +16,23 @@ export class ApiError extends Error {
   }
 }
 
-export const getCurrentUser = cache(async () => {
+// Fast path: verify the session JWT against the project's published keys
+// locally (cached JWKS, sub-millisecond warm). Falls back to the auth server
+// when local verification fails so rotation and edge cases still resolve.
+export const getCurrentUser = cache(async (): Promise<User | null> => {
+  const cookieStore = await cookies();
+  const token = readAccessToken(cookieStore.getAll());
+  if (token) {
+    const claims = await verifyAuthTokenLocally(token);
+    if (claims) {
+      return {
+        id: claims.sub,
+        email: claims.email,
+        user_metadata: (claims.user_metadata as Record<string, unknown> | undefined) ?? {},
+        app_metadata: (claims.app_metadata as Record<string, unknown> | undefined) ?? {},
+      } as unknown as User;
+    }
+  }
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) return null;

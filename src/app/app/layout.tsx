@@ -32,12 +32,10 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
     // through sign-in and back to the landing page.
     throw error;
   }
-  const { user, workspaces, activeWorkspace } = context;
+  const { user, workspaces, activeWorkspace, accounts } = context;
   const supabase = await createClient();
-  const { data: account } = activeWorkspace
-    ? await supabase.from("credit_accounts").select("balance,reserved").eq("workspace_id", activeWorkspace.id).maybeSingle()
-    : { data: null };
-  const creditBalance = account ? Number(account.balance) - Number(account.reserved) : 0;
+  const [account] = accounts.filter((entry) => entry.workspaceId === activeWorkspace?.id);
+  const creditBalance = account ? account.balance - account.reserved : 0;
   const { data: profile } = await supabase.from("profiles").select("display_name,is_platform_admin").eq("id", user.id).maybeSingle();
 
   return (

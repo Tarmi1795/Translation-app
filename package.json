@@ -30,6 +30,7 @@
     "docx": "9.5.1",
     "docx-preview": "0.4.0",
     "file-type": "21.3.4",
+    "jose": "^6.2.12",
     "jszip": "3.10.1",
     "lucide-react": "0.544.0",
     "nanoid": "5.1.16",
