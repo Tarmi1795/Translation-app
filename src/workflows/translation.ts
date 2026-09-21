@@ -128,7 +128,7 @@ export async function translationWorkflow(jobId: string) {
     await updateStage(jobId, "translating", 35, "Translating contextual segment batches.");
     // Larger batches cut provider round trips; a small wave of parallel
     // batches cuts wall-clock time without hammering the provider.
-    const batchSize = 16;
+    const batchSize = 12;
     const concurrency = 4;
     const batches: TranslationInputSegment[][] = [];
     for (let index = 0; index < payload.segments.length; index += batchSize) {

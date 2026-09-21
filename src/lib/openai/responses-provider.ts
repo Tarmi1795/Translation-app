@@ -23,9 +23,27 @@ function parseProviderJson(outputText: string | undefined, what: string) {
   catch { throw new Error(`The translation provider returned an unreadable ${what} response. Retry the operation.`); }
 }
 
-function assertCompleteTranslation(segments: TranslationInputSegment[], parsed: z.infer<typeof translationOutput>) {
-  const expected = new Set(segments.map((segment) => segment.id));
-  if (parsed.segments.length !== segments.length || new Set(parsed.segments.map((segment) => segment.id)).size !== expected.size || parsed.segments.some((segment) => !expected.has(segment.id) || !segment.translatedText.trim())) throw new Error("The translation provider returned an incomplete or duplicate segment set.");
+// Models occasionally drop one segment from a long batch. Instead of failing
+// the job, re-request only what is missing, in smaller chunks each round.
+async function completeTranslation(
+  request: (batch: TranslationInputSegment[]) => Promise<z.infer<typeof translationOutput>>,
+  segments: TranslationInputSegment[],
+): Promise<TranslatedSegment[]> {
+  const results = new Map<string, string>();
+  let pending = segments;
+  for (let round = 0; round < 3 && pending.length > 0; round += 1) {
+    const chunkLimit = round === 0 ? Number.POSITIVE_INFINITY : Math.max(4, 16 >> round);
+    for (let offset = 0; offset < pending.length; offset += chunkLimit) {
+      const parsed = await request(pending.slice(offset, offset + chunkLimit));
+      const wanted = new Set(pending.slice(offset, offset + chunkLimit).map((segment) => segment.id));
+      for (const segment of parsed.segments) {
+        if (wanted.has(segment.id) && segment.translatedText.trim() && !results.has(segment.id)) results.set(segment.id, segment.translatedText);
+      }
+    }
+    pending = segments.filter((segment) => !results.has(segment.id));
+  }
+  if (pending.length > 0) throw new Error(`The provider did not return ${pending.length} segment${pending.length === 1 ? "" : "s"} after retries.`);
+  return segments.map((segment) => ({ id: segment.id, translatedText: results.get(segment.id)! }));
 }
 
 /**
@@ -60,17 +78,17 @@ export class OpenAIResponsesProvider implements TranslationProvider {
   async translateBatch(direction: LanguageDirection, segments: TranslationInputSegment[], context: TranslationContext): Promise<TranslatedSegment[]> {
     const target = direction === "en-ar" ? "Modern Standard Arabic" : "professional English";
     const source = direction === "en-ar" ? "English" : "Arabic";
-    const response = await this.client.responses.create({
-      model: this.translationModel,
-      store: false,
-      reasoning: { effort: "low" },
-      instructions: TRANSLATION_INSTRUCTIONS(source, target),
-      input: JSON.stringify({ direction, glossary: context.glossary, approvedPrivateMemoryExamples: context.memory, segments }),
-      text: { format: { type: "json_schema", name: "translation_batch", strict: true, schema: translationSchema } },
-    });
-    const parsed = translationOutput.parse(parseProviderJson(response.output_text, "translation"));
-    assertCompleteTranslation(segments, parsed);
-    return parsed.segments;
+    return completeTranslation(async (batch) => {
+      const response = await this.client.responses.create({
+        model: this.translationModel,
+        store: false,
+        reasoning: { effort: "low" },
+        instructions: TRANSLATION_INSTRUCTIONS(source, target),
+        input: JSON.stringify({ direction, glossary: context.glossary, approvedPrivateMemoryExamples: context.memory, segments: batch }),
+        text: { format: { type: "json_schema", name: "translation_batch", strict: true, schema: translationSchema } },
+      });
+      return translationOutput.parse(parseProviderJson(response.output_text, "translation"));
+    }, segments);
   }
 
   async ocrDocument(bytes: Uint8Array, mimeType: string, title: string) {
@@ -133,13 +151,11 @@ export class ZaiChatProvider implements TranslationProvider {
   async translateBatch(direction: LanguageDirection, segments: TranslationInputSegment[], context: TranslationContext): Promise<TranslatedSegment[]> {
     const target = direction === "en-ar" ? "Modern Standard Arabic" : "professional English";
     const source = direction === "en-ar" ? "English" : "Arabic";
-    const parsed = translationOutput.parse(await this.completeJson(
+    return completeTranslation(async (batch) => translationOutput.parse(await this.completeJson(
       `${TRANSLATION_INSTRUCTIONS(source, target)} Use the JSON schema: ${JSON.stringify(translationSchema)}`,
-      JSON.stringify({ direction, glossary: context.glossary, approvedPrivateMemoryExamples: context.memory, segments }),
+      JSON.stringify({ direction, glossary: context.glossary, approvedPrivateMemoryExamples: context.memory, segments: batch }),
       this.translationModel,
-    ));
-    assertCompleteTranslation(segments, parsed);
-    return parsed.segments;
+    )), segments);
   }
 
   async ocrDocument(bytes: Uint8Array, mimeType: string, title: string) {
