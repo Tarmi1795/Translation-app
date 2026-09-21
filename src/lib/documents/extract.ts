@@ -19,18 +19,20 @@ function ocrNodes(blocks: OcrBlock[], page: number, width: number, height: numbe
 // One unreadable page (huge embedded images, exotic encodings) must not kill
 // the extraction. Rate limits are transient: retry with backoff before
 // conceding, so parallel waves do not silently blank pages.
-const OCR_PAGE_ATTEMPTS = [0, 3000, 9000];
+const OCR_PAGE_ATTEMPTS = [0, 2000, 4000];
 
 async function ocrPageSafe(pageBytes: Uint8Array, mimeType: string, title: string, page: number): Promise<OcrBlock[]> {
-  let lastError = "unknown error";
   for (const [attempt, delay] of OCR_PAGE_ATTEMPTS.entries()) {
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
     try {
       const result = await getTranslationProvider().ocrDocument(pageBytes, mimeType, `${title} - page ${page}`);
       return result.blocks;
     } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-      console.warn(`OCR attempt ${attempt + 1} failed for page ${page} of ${title}: ${lastError}`);
+      // Format rejections are deterministic: no point burning the retry
+      // budget; the caller falls back to the page's embedded image.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`OCR attempt ${attempt + 1} failed for page ${page} of ${title}: ${message}`);
+      if (/400|格式|format|parse/i.test(message)) return [];
     }
   }
   return [];
@@ -76,10 +78,10 @@ export async function extractCanonicalDocument({ bytes, mimeType, title, directi
     const digital = await extractDigitalPdf(bytes, title, direction);
     if (digital) {
       const source = await PDFDocument.load(bytes);
-      // OCR the image-only pages in small parallel waves: sequential per-page
-      // calls exceed the function budget, while wider waves trip provider
-      // rate limits (which retries then back off from).
-      const ocrConcurrency = 2;
+      // OCR the image-only pages in parallel waves sized to stay inside the
+      // function time budget; transient rate limits are handled by the
+      // short-backoff retries inside ocrPageSafe.
+      const ocrConcurrency = 3;
       const pendingPages: number[] = [];
       for (let page = 1; page <= digital.pageCount; page += 1) {
         if (!digital.nodes.some((node) => node.page === page)) pendingPages.push(page);
