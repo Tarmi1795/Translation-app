@@ -21,6 +21,10 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "10mb",
     },
+    // Client-side router cache: revisiting a workspace page within the window
+    // paints from cache instead of re-rendering on the server. Data that must
+    // be fresh (jobs, exports) is fetched by client components separately.
+    staleTimes: { dynamic: 90, static: 300 },
   },
   headers: async () => [
     {
