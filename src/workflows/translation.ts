@@ -28,7 +28,10 @@ async function loadWorkflowPayload(jobId: string): Promise<WorkflowPayload> {
   const { data: project, error: projectError } = await admin.from("projects").select("direction").eq("id", job.project_id).single();
   if (projectError) throw projectError;
   const [{ data: segments, error: segmentError }, { data: glossary }, { data: memory }, { data: globalMemory }] = await Promise.all([
-    admin.from("segments").select("id,node_id,source_text,segment_order").eq("version_id", job.version_id).in("id", job.segment_ids).order("segment_order"),
+    // Filter by version + status, never by the job's segment_ids list: large
+    // documents put hundreds of UUIDs into an `in` filter and PostgREST
+    // rejects the oversized URL with a bare 400.
+    admin.from("segments").select("id,node_id,source_text,segment_order").eq("version_id", job.version_id).in("status", ["pending", "failed"]).order("segment_order"),
     admin.from("glossary_terms").select("source_term,target_term").eq("workspace_id", job.workspace_id).eq("direction", project.direction).limit(200),
     admin.from("translation_memory").select("source_text,target_text").eq("workspace_id", job.workspace_id).eq("direction", project.direction).eq("approved", true).limit(40),
     admin.from("global_translation_memory").select("source_text,target_text").eq("direction", project.direction).limit(20),

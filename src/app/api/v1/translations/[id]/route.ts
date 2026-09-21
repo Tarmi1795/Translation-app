@@ -23,7 +23,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         catch { /* The database cancellation flag still stops a run between batches. */ }
       }
       const admin = createAdminClient();
-      const { data: completed } = job.segment_ids.length ? await admin.from("segments").select("source_text").in("id", job.segment_ids).in("status", ["translated", "edited", "approved"]) : { data: [] };
+      // Count completed words via the version (an id list of hundreds of
+      // UUIDs overflows the PostgREST URL limit on large documents).
+      const { data: completed } = job.version_id ? await admin.from("segments").select("source_text").eq("version_id", job.version_id).in("status", ["translated", "edited", "approved"]) : { data: [] };
       const successfulWords = (completed ?? []).reduce((sum, segment) => sum + countSourceWords(segment.source_text), 0);
       await admin.rpc("commit_credits", { p_job_id: id, p_successful_words: successfulWords });
       await Promise.all([
