@@ -50,6 +50,10 @@ export function AppShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  // Optimistic highlight: the clicked menu item activates immediately instead
+  // of waiting ~1s for the round trip to the server region.
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  useEffect(() => { setPendingHref(null); }, [pathname]);
   const currentPage = navigation.find(({ href }) => href === "/app" ? pathname === href : pathname.startsWith(href))?.label ?? (pathname.startsWith("/app/admin") ? "Beta administration" : "Workspace");
   const creditPercent = Math.min(100, Math.max(0, (creditBalance / Math.max(5000, creditBalance)) * 100));
 
@@ -110,7 +114,7 @@ export function AppShell({
         {navigation.map(({ href, label, icon: Icon }) => {
           const active = href === "/app" ? pathname === href : pathname.startsWith(href);
           return (
-            <Link key={href} href={href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={cn("group relative flex min-h-11 items-center gap-3 rounded-xl px-2.5 text-sm font-semibold transition-[background-color,color,transform] duration-200 active:scale-[0.99]", active ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--muted)] hover:bg-[var(--subtle)] hover:text-[var(--foreground)]")}>
+            <Link key={href} href={href} onClick={() => { setMobileOpen(false); if (href !== pathname) setPendingHref(href); }} aria-current={active ? "page" : undefined} className={cn("group relative flex min-h-11 items-center gap-3 rounded-xl px-2.5 text-sm font-semibold transition-[background-color,color,transform] duration-200 active:scale-[0.99]", active || pendingHref === href ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--muted)] hover:bg-[var(--subtle)] hover:text-[var(--foreground)]")}>
               {active && <span className="absolute inset-y-2 start-0 w-0.5 rounded-full bg-[var(--accent)]" />}
               <span className={cn("grid size-8 place-items-center rounded-lg transition-colors", active ? "bg-[color:color-mix(in_srgb,var(--accent)_10%,var(--surface))]" : "group-hover:bg-[var(--surface)]")}><Icon aria-hidden="true" size={18} strokeWidth={1.8} /></span> {label}
             </Link>
