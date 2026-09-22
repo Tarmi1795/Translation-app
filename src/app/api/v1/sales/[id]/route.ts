@@ -58,7 +58,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (input.amount !== undefined) patch.amount = input.amount;
     if (input.saleDate !== undefined) patch.sale_date = input.saleDate;
     if (input.status !== undefined) patch.status = input.status;
-    if (Object.keys(patch).length === 0) return apiData({ sale: toSaleRecord(row, 0) });
+    if (Object.keys(patch).length === 0) {
+      const { data: paymentRows } = await supabase.from("sale_payments").select("amount").eq("sale_id", id);
+      const amountPaid = (paymentRows ?? []).reduce((sum, payment: { amount: string | number }) => sum + Number(payment.amount), 0);
+      return apiData({ sale: toSaleRecord(row, amountPaid) });
+    }
 
     // Voiding changes nothing else: payments stay untouched and totals exclude void sales.
     const { data: updated, error } = await supabase.from("sales").update(patch).eq("id", id).select(SALE_COLUMNS).single();
