@@ -21,7 +21,7 @@ function ocrNodes(blocks: OcrBlock[], page: number, width: number, height: numbe
 // conceding, so parallel waves do not silently blank pages.
 const OCR_PAGE_ATTEMPTS = [0, 2000, 4000];
 
-async function ocrPageSafe(pageBytes: Uint8Array, mimeType: string, title: string, page: number): Promise<OcrBlock[]> {
+async function ocrPageSafe(pageBytes: Uint8Array, mimeType: string, title: string, page: number, errors: string[] = []): Promise<OcrBlock[]> {
   for (const [attempt, delay] of OCR_PAGE_ATTEMPTS.entries()) {
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
     try {
@@ -31,6 +31,7 @@ async function ocrPageSafe(pageBytes: Uint8Array, mimeType: string, title: strin
       // Format rejections are deterministic: no point burning the retry
       // budget; the caller falls back to the page's embedded image.
       const message = error instanceof Error ? error.message : String(error);
+      errors.push(`p${page}: ${message.slice(0, 140)}`);
       console.warn(`OCR attempt ${attempt + 1} failed for page ${page} of ${title}: ${message}`);
       if (/400|格式|format|parse/i.test(message)) return [];
     }
@@ -86,19 +87,21 @@ export async function extractCanonicalDocument({ bytes, mimeType, title, directi
       for (let page = 1; page <= digital.pageCount; page += 1) {
         if (!digital.nodes.some((node) => node.page === page)) pendingPages.push(page);
       }
+      const ocrErrors: string[] = [];
       const handlePage = async (page: number) => {
         const single = await PDFDocument.create();
         single.addPage((await single.copyPages(source, [page - 1]))[0]);
         const pageBytes = await single.save();
         let blocks: OcrBlock[] = [];
-        if (pageBytes.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(pageBytes, mimeType, title, page);
+        if (pageBytes.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(pageBytes, mimeType, title, page, ocrErrors);
         if (!blocks.length) {
           const embedded = embeddedPageImage(source.getPage(page - 1));
-          if (embedded && embedded.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(embedded, "image/jpeg", title, page);
+          if (embedded && embedded.length <= MAX_OCR_PAGE_BYTES) blocks = await ocrPageSafe(embedded, "image/jpeg", title, page, ocrErrors);
         }
         const size = digital.pages![page - 1];
         digital.nodes.push(...ocrNodes(blocks, page, size.width, size.height, direction));
-        digital.warnings.push({ code: "ocr_uncertain", page, severity: "warning", message: blocks.length ? "Scanned page: OCR text and approximate placement require review." : "No text could be read from this page. The original page is preserved in the export; enter any missing text in Text corrections." });
+        const why = blocks.length ? "" : ` (last error: ${ocrErrors.filter((e) => e.startsWith(`p${page}:`)).at(-1) ?? "none recorded"})`;
+        digital.warnings.push({ code: "ocr_uncertain", page, severity: "warning", message: (blocks.length ? "Scanned page: OCR text and approximate placement require review." : `No text could be read from this page. The original page is preserved in the export; enter any missing text in Text corrections${why}.`) });
       };
       for (let offset = 0; offset < pendingPages.length; offset += ocrConcurrency) {
         await Promise.all(pendingPages.slice(offset, offset + ocrConcurrency).map((page) => handlePage(page)));
