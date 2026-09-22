@@ -173,12 +173,34 @@ export class ZaiChatProvider implements TranslationProvider {
   async ocrDocument(bytes: Uint8Array, mimeType: string, title: string) {
     const base64 = Buffer.from(bytes).toString("base64");
     const dataUrl = `data:${mimeType};base64,${base64}`;
-    const parsed = ocrOutput.parse(await this.completeJson(
-      `${OCR_INSTRUCTIONS} Use the JSON schema: ${JSON.stringify(ocrSchema)}`,
-      [{ type: "text", text: `OCR this document: ${title}` }, { type: "image_url", image_url: { url: dataUrl } }],
-      this.ocrModel,
-    )) as { pageCount: number; blocks: OcrBlock[] };
-    return parsed;
+    const user = [{ type: "text", text: `OCR this document: ${title}` }, { type: "image_url", image_url: { url: dataUrl } }];
+    try {
+      const parsed = ocrOutput.parse(await this.completeJson(
+        `${OCR_INSTRUCTIONS} Use the JSON schema: ${JSON.stringify(ocrSchema)}`,
+        user,
+        this.ocrModel,
+      )) as { pageCount: number; blocks: OcrBlock[] };
+      return parsed;
+    } catch (error) {
+      // Vision models sometimes will not emit clean JSON for dense scans.
+      // Fall back to plain transcription; the text still reaches the editor.
+      if (!(error instanceof Error) || !/unreadable|no .* content/i.test(error.message)) throw error;
+      const response = await this.client.chat.completions.create({
+        model: this.ocrModel,
+        temperature: 0,
+        messages: [
+          { role: "system", content: "Transcribe every piece of visible text in the image, in reading order. Output only the transcribed text, one block per paragraph, with no commentary." },
+          { role: "user", content: user as never },
+        ],
+      } as never);
+      const text = (response.choices?.[0]?.message?.content ?? "").trim();
+      if (!text) throw error;
+      const blocks = text
+        .split(/\n{2,}|\n(?=[A-Z\u0600-\u06FF0-9])/)
+        .map((line, index) => ({ id: `plain-${index}`, text: line.trim(), page: 1, order: index, confidence: 0.6, type: "paragraph" as const }))
+        .filter((block) => block.text);
+      return { pageCount: 1, blocks } as { pageCount: number; blocks: OcrBlock[] };
+    }
   }
 }
 
