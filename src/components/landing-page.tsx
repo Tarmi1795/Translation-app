@@ -39,6 +39,7 @@ const copy = {
   en: {
     navFeatures: "Capabilities",
     navProcess: "Workflow",
+    navPricing: "Pricing",
     signIn: "Sign in",
     start: "Start translating",
     titleA: "Professional documents, fluent",
@@ -59,6 +60,7 @@ const copy = {
   ar: {
     navFeatures: "الإمكانات",
     navProcess: "سير العمل",
+    navPricing: "الأسعار",
     signIn: "تسجيل الدخول",
     start: "ابدأ الترجمة",
     titleA: "مستندات احترافية بطلاقة",
@@ -99,6 +101,7 @@ export function LandingPage() {
           <nav className="hidden items-center gap-1 rounded-full border bg-[var(--surface-raised)] p-1 text-sm font-semibold text-[var(--muted)] shadow-sm md:flex" aria-label="Primary navigation">
             <a href="#capabilities" className="inline-flex min-h-10 items-center rounded-full px-4 transition-colors hover:bg-[var(--subtle)] hover:text-[var(--foreground)]">{t.navFeatures}</a>
             <a href="#process" className="inline-flex min-h-10 items-center rounded-full px-4 transition-colors hover:bg-[var(--subtle)] hover:text-[var(--foreground)]">{t.navProcess}</a>
+            <Link href="/pricing" className="inline-flex min-h-10 items-center rounded-full px-4 transition-colors hover:bg-[var(--subtle)] hover:text-[var(--foreground)]">{t.navPricing}</Link>
           </nav>
           <div className="flex items-center gap-2">
             <UiControls />
@@ -211,7 +214,10 @@ export function LandingPage() {
           <div className="landing-frost-card landing-frost-cta relative overflow-hidden rounded-[2rem] border px-6 py-12 text-[var(--foreground)] sm:px-12">
             <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
               <div><div className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-[color:color-mix(in_srgb,var(--foreground)_72%,var(--muted))]"><ShieldCheck aria-hidden="true" size={18} className="text-[var(--accent)]" /> {t.privacy}</div><h2 className="text-3xl font-bold tracking-[-0.04em]">{t.cta}</h2><p className="mt-3 text-[var(--muted)]">{t.ctaSub}</p></div>
-              <Link href="/auth/sign-in" className="group inline-flex min-h-13 items-center gap-2 rounded-xl bg-[var(--primary)] px-6 font-bold text-white shadow-[var(--shadow-md)] transition-[background-color,transform,box-shadow] duration-200 active:scale-[0.985] hover:bg-[var(--primary-hover)] hover:shadow-[var(--shadow-lg)] dark:text-[#0e1724]">{t.start} <ArrowRight aria-hidden="true" size={18} className="transition-transform duration-200 group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" /></Link>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Link href="/auth/sign-in" className="group inline-flex min-h-13 items-center gap-2 rounded-xl bg-[var(--primary)] px-6 font-bold text-white shadow-[var(--shadow-md)] transition-[background-color,transform,box-shadow] duration-200 active:scale-[0.985] hover:bg-[var(--primary-hover)] hover:shadow-[var(--shadow-lg)] dark:text-[#0e1724]">{t.start} <ArrowRight aria-hidden="true" size={18} className="transition-transform duration-200 group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" /></Link>
+                <Link href="/pricing" className="inline-flex min-h-13 items-center justify-center gap-2 rounded-xl border bg-[var(--surface)] px-6 font-semibold shadow-sm transition-[background-color,border-color,transform] duration-200 active:scale-[0.985] hover:border-[var(--border-strong)] hover:bg-[var(--subtle)]">{t.navPricing}</Link>
+              </div>
             </div>
           </div>
         </section>

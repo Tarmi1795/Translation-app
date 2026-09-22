@@ -147,3 +147,10 @@ export interface BrandingAsset {
   placement: BrandingPlacement;
   previewUrl: string;
 }
+
+// --- Commercial layer ---
+export interface PlanSummary { code: string; name: string; nameAr?: string | null; tagline?: string | null; taglineAr?: string | null; priceMonthly: number; currency: string; monthlyWordAllowance: number; maxSeats: number; features: string[]; }
+export interface SubscriptionSummary { planCode: string; planName: string; status: "trialing" | "active" | "past_due" | "canceled"; currentPeriodStart: string; currentPeriodEnd: string; cancelAtPeriodEnd: boolean; provider: string; }
+export interface BillingStatement { id: string; kind: string; amount: number; currency: string; description?: string | null; planCode?: string | null; createdAt: string; }
+export interface SalesTotals { recorded: number; received: number; outstanding: number; currency: string; count: number; }
+export interface SaleRecord { id: string; customerName: string; description?: string | null; amount: number; currency: string; saleDate: string; status: "recorded" | "partially_paid" | "paid" | "void"; amountPaid: number; outstanding: number; documentProjectId?: string | null; createdAt: string; }

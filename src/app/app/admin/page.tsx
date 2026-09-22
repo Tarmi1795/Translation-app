@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AdminCreditConsole } from "@/components/admin-credit-console";
+import { AdminConsole } from "@/components/admin-console";
 import { Card } from "@/components/ui/card";
 import { requirePlatformAdmin } from "@/lib/auth";
 
@@ -15,5 +15,5 @@ export default async function AdminPage() {
       </Card>
     );
   }
-  return <AdminCreditConsole />;
+  return <AdminConsole />;
 }

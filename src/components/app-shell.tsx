@@ -6,10 +6,12 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   BookMarked,
   ChevronDown,
+  CreditCard,
   FileText,
   Gauge,
   LogOut,
   Menu,
+  ReceiptText,
   Settings,
   ShieldCheck,
   UsersRound,
@@ -25,6 +27,8 @@ const navigation = [
   { href: "/app", label: "Overview", icon: Gauge },
   { href: "/app/translate", label: "New translation", icon: FileText },
   { href: "/app/glossary", label: "Glossary & memory", icon: BookMarked },
+  { href: "/app/sales", label: "Sales", icon: ReceiptText },
+  { href: "/app/subscription", label: "Subscription", icon: CreditCard },
   { href: "/app/team", label: "Team", icon: UsersRound },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ] as const;
