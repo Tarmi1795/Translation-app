@@ -99,7 +99,10 @@ export async function POST(request: Request) {
     const { data: plan, error: planError } = await admin.from("plans").select("code,name,price_monthly").eq("code", input.planCode).maybeSingle();
     if (planError) throw planError;
     if (!plan) throw new ApiError(404, "Plan not found.", "not_found");
-    if (Number(plan.price_monthly) > 0 && !process.env.NOQOODY_WEBHOOK_SECRET) {
+    // Checkout enablement is a deliberate flag, independent of the webhook
+    // secret: configuring the secret for verification/testing must never
+    // silently unlock free self-serve activation of paid plans.
+    if (Number(plan.price_monthly) > 0 && process.env.CHECKOUT_ENABLED !== "true") {
       throw new ApiError(402, "Online checkout is not available yet. Contact support to activate a paid plan.", "checkout_unavailable");
     }
 
