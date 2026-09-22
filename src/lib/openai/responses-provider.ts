@@ -20,7 +20,19 @@ const OCR_INSTRUCTIONS = "Extract ALL visible English and Arabic document text w
 function parseProviderJson(outputText: string | undefined, what: string) {
   if (!outputText?.trim()) throw new Error(`The translation provider returned no ${what} content. Check the model configuration and API quota, then retry.`);
   try { return JSON.parse(outputText); }
-  catch { throw new Error(`The translation provider returned an unreadable ${what} response. Retry the operation.`); }
+  catch { /* fall through: strip fences / extract the JSON object */ }
+  const fenced = outputText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  for (const candidate of [fenced?.[1], outputText]) {
+    const text = candidate?.trim();
+    if (!text) continue;
+    try { return JSON.parse(text); } catch { /* try next strategy */ }
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start !== -1 && end > start) {
+      try { return JSON.parse(text.slice(start, end + 1)); } catch { /* not JSON anywhere in this response */ }
+    }
+  }
+  throw new Error(`The translation provider returned an unreadable ${what} response. Retry the operation.`);
 }
 
 // Models occasionally drop one segment from a long batch. Instead of failing
