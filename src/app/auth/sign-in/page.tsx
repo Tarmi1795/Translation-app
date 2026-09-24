@@ -1,14 +1,32 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { ArrowLeft, CheckCircle2, ShieldCheck } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { UiControls } from "@/components/ui-controls";
 import { SignInForm } from "@/components/auth/sign-in-form";
+import { getCurrentUser } from "@/lib/auth";
+import { hasSupabaseEnv } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Sign in" };
 
-export default function SignInPage() {
+export default async function SignInPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
+  // An authenticated visitor opening /auth/sign-in is usually someone who
+  // clicked Home and then "Sign in" out of habit — send them straight to the
+  // workspace instead of showing a login form they do not need.
+  if (hasSupabaseEnv()) {
+    try {
+      const user = await getCurrentUser();
+      if (user) {
+        const { next } = await searchParams;
+        const target = next && next.startsWith("/") ? next : "/app";
+        redirect(target as never);
+      }
+    } catch {
+      // Fall through to the sign-in form on transient auth errors.
+    }
+  }
   return (
     <main id="main-content" className="grid min-h-dvh lg:grid-cols-[.9fr_1.1fr]">
       <section className="flex flex-col border-e bg-[var(--surface)] px-4 py-5 sm:px-8 lg:px-12">

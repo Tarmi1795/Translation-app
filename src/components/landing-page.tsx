@@ -41,6 +41,8 @@ const copy = {
     navProcess: "Workflow",
     navPricing: "Pricing",
     signIn: "Sign in",
+    openWorkspace: "Open workspace",
+    welcomeBack: "Welcome back",
     start: "Start translating",
     titleA: "Professional documents, fluent",
     titleB: "in English and Arabic.",
@@ -62,6 +64,8 @@ const copy = {
     navProcess: "سير العمل",
     navPricing: "الأسعار",
     signIn: "تسجيل الدخول",
+    openWorkspace: "افتح مساحة العمل",
+    welcomeBack: "مرحبًا بعودتك",
     start: "ابدأ الترجمة",
     titleA: "مستندات احترافية بطلاقة",
     titleB: "بالعربية والإنجليزية.",
@@ -87,7 +91,7 @@ const features = [
   { icon: UsersRound, en: "Review with accountability", ar: "مراجعة بمسؤولية واضحة", detailEn: "Assign translators and reviewers, discuss changes, and preserve an approval trail.", detailAr: "عيّن المترجمين والمراجعين وناقش التغييرات واحتفظ بسجل الاعتماد." },
 ] as const;
 
-export function LandingPage() {
+export function LandingPage({ authenticated = false, userName }: { authenticated?: boolean; userName?: string | null } = {}) {
   const { locale, theme } = useUi();
   const t = copy[locale];
   const isArabic = locale === "ar";
@@ -105,7 +109,9 @@ export function LandingPage() {
           </nav>
           <div className="flex items-center gap-2">
             <UiControls />
-            <Link href="/auth/sign-in" className="hidden min-h-11 items-center rounded-xl px-3 text-sm font-semibold transition-colors hover:bg-[var(--subtle)] sm:inline-flex">{t.signIn}</Link>
+            {authenticated
+              ? <Link href="/app" className="hidden min-h-11 items-center rounded-xl bg-[var(--accent-soft)] px-4 text-sm font-bold text-[var(--accent)] transition-colors hover:bg-[color:color-mix(in_srgb,var(--accent)_18%,var(--surface))] sm:inline-flex">{t.openWorkspace}</Link>
+              : <Link href="/auth/sign-in" className="hidden min-h-11 items-center rounded-xl px-3 text-sm font-semibold transition-colors hover:bg-[var(--subtle)] sm:inline-flex">{t.signIn}</Link>}
           </div>
         </div>
       </header>
@@ -136,10 +142,15 @@ export function LandingPage() {
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-[color:color-mix(in_srgb,var(--foreground)_72%,var(--muted))] sm:text-xl">{t.intro}</p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              <Link href="/auth/sign-in" className="group">
-                <Button size="lg" className="w-full sm:w-auto">{t.start} <ArrowRight aria-hidden="true" size={18} className="transition-transform duration-200 group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" /></Button>
-              </Link>
-              <Link href="/app" className="inline-flex min-h-13 items-center justify-center rounded-xl border bg-[var(--surface)] px-6 text-base font-semibold shadow-sm transition-[background-color,border-color,transform] duration-200 active:scale-[0.985] hover:border-[var(--border-strong)] hover:bg-[var(--subtle)]">{t.signIn}</Link>
+              {authenticated
+                ? <Link href="/app" className="group">
+                    <Button size="lg" className="w-full sm:w-auto">{t.openWorkspace} <ArrowRight aria-hidden="true" size={18} className="transition-transform duration-200 group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" /></Button>
+                  </Link>
+                : <Link href="/auth/sign-in" className="group">
+                    <Button size="lg" className="w-full sm:w-auto">{t.start} <ArrowRight aria-hidden="true" size={18} className="transition-transform duration-200 group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" /></Button>
+                  </Link>}
+              {!authenticated && <Link href="/app" className="inline-flex min-h-13 items-center justify-center rounded-xl border bg-[var(--surface)] px-6 text-base font-semibold shadow-sm transition-[background-color,border-color,transform] duration-200 active:scale-[0.985] hover:border-[var(--border-strong)] hover:bg-[var(--subtle)]">{t.signIn}</Link>}
+              {authenticated && userName && <p className="text-sm font-semibold text-[var(--muted)]">{t.welcomeBack}{userName ? `، ${userName}` : ""}</p>}
             </div>
             <div className="mt-8 grid gap-3 text-sm font-medium text-[color:color-mix(in_srgb,var(--foreground)_72%,var(--muted))] sm:grid-cols-3">
               {[t.trusted, t.privacy, t.noCard].map((item) => (
@@ -215,7 +226,7 @@ export function LandingPage() {
             <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
               <div><div className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-[color:color-mix(in_srgb,var(--foreground)_72%,var(--muted))]"><ShieldCheck aria-hidden="true" size={18} className="text-[var(--accent)]" /> {t.privacy}</div><h2 className="text-3xl font-bold tracking-[-0.04em]">{t.cta}</h2><p className="mt-3 text-[var(--muted)]">{t.ctaSub}</p></div>
               <div className="flex flex-col gap-3 sm:flex-row">
-                <Link href="/auth/sign-in" className="group inline-flex min-h-13 items-center gap-2 rounded-xl bg-[var(--primary)] px-6 font-bold text-white shadow-[var(--shadow-md)] transition-[background-color,transform,box-shadow] duration-200 active:scale-[0.985] hover:bg-[var(--primary-hover)] hover:shadow-[var(--shadow-lg)] dark:text-[#0e1724]">{t.start} <ArrowRight aria-hidden="true" size={18} className="transition-transform duration-200 group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" /></Link>
+                <Link href={authenticated ? "/app" : "/auth/sign-in"} className="group inline-flex min-h-13 items-center gap-2 rounded-xl bg-[var(--primary)] px-6 font-bold text-white shadow-[var(--shadow-md)] transition-[background-color,transform,box-shadow] duration-200 active:scale-[0.985] hover:bg-[var(--primary-hover)] hover:shadow-[var(--shadow-lg)] dark:text-[#0e1724]">{authenticated ? t.openWorkspace : t.start} <ArrowRight aria-hidden="true" size={18} className="transition-transform duration-200 group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" /></Link>
                 <Link href="/pricing" className="inline-flex min-h-13 items-center justify-center gap-2 rounded-xl border bg-[var(--surface)] px-6 font-semibold shadow-sm transition-[background-color,border-color,transform] duration-200 active:scale-[0.985] hover:border-[var(--border-strong)] hover:bg-[var(--subtle)]">{t.navPricing}</Link>
               </div>
             </div>
