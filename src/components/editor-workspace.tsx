@@ -158,34 +158,6 @@ export function EditorWorkspace({
     finally { setCancelling(false); }
   }
 
-  // WYSIWYG overlays: segments with known positions become editable text
-  // pinned to the rendered PDF pages. Only the translated artifact gets them.
-  const previewOverlays = useMemo(() => {
-    if (artifact?.format !== "pdf" || !segmentLayouts) return [];
-    return segments
-      .filter((segment) => segmentLayouts[segment.id] && segment.translatedText.trim())
-      .map((segment) => {
-        const layout = segmentLayouts[segment.id];
-        return { id: segment.id, page: layout.page, x: layout.x, y: layout.y, width: layout.width, height: layout.height, fontSize: layout.fontSize, text: segment.translatedText };
-      });
-  }, [artifact?.format, segments, segmentLayouts]);
-
-  async function saveOverlayEdit(segmentId: string, text: string): Promise<boolean> {
-    setError(null);
-    let ok = false;
-    try {
-      const response = await fetch(`/api/v1/segments/${segmentId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ translatedText: text, reason: "human_edit" }) });
-      const payload = await readPayload(response);
-      if (!response.ok) { setError(payload.error?.message ?? "The correction could not be saved."); return false; }
-      ok = true;
-      setSegments((current) => current.map((item) => item.id === segmentId ? { ...item, translatedText: text, status: "edited", qualityFlags: payload.data?.qualityFlags ?? item.qualityFlags } : item));
-      setDirtyIds((current) => { const next = new Set(current); next.delete(`${segmentId}:translation`); return next; });
-      setArtifactStale(true);
-      setMessage("Correction saved to the segment. Rebuild the preview to bake it into the file.");
-    } catch { setError("The correction could not be saved. Check your connection and retry."); }
-    return ok;
-  }
-
   async function reviewAction(action: "submit" | "request_changes" | "approve") {
     setError(null);
     try {
@@ -297,7 +269,7 @@ export function EditorWorkspace({
         <Button variant={view === "text" ? "primary" : "secondary"} onClick={() => setView("text")}>Text corrections {lowConfidence ? `(${lowConfidence} OCR)` : ""}</Button>
         {artifact && !unsaved && <a href={`/api/v1/exports/${artifact.id}/download`} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[var(--primary)] px-4 text-sm font-bold text-white dark:text-[#0e1724]"><Download size={17} />Download this {artifact.format === "pdf" ? "PDF" : "Word file"}</a>}
       </div>
-      {allWarnings.length > 0 && <details className="mb-4 rounded-xl border bg-[var(--surface)] p-4" open><summary className="cursor-pointer text-sm font-bold">{allWarnings.length} items to check — layout fidelity is not guaranteed</summary><ul className="mt-3 space-y-2 text-sm leading-6">{allWarnings.map((warning, index) => <li key={index} className="flex gap-2"><AlertTriangle size={16} className="mt-1 shrink-0 text-[var(--warning)]" aria-hidden="true" /><span>Page {warning.page}: {warning.message}</span></li>)}</ul></details>}
+      {allWarnings.length > 0 && <details className="mb-4 rounded-xl border bg-[var(--surface)] p-4"><summary className="cursor-pointer text-sm font-bold text-[var(--muted)]">{allWarnings.length} preview note{allWarnings.length === 1 ? "" : "s"} <span className="font-normal">— your document is ready; these are layout details, not errors</span></summary><ul className="mt-3 space-y-2 text-sm leading-6">{allWarnings.map((warning, index) => <li key={index} className="flex gap-2" style={warning.severity === "info" ? { opacity: 0.75 } : undefined}><AlertTriangle size={16} className="mt-1 shrink-0 text-[var(--muted)]" aria-hidden="true" /><span>Page {warning.page}: {warning.message}</span></li>)}</ul></details>}
       {view === "preview" && <>
         {artifact && artifactStale && <div role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[color:color-mix(in_srgb,var(--warning)_35%,var(--border))] bg-[color:color-mix(in_srgb,var(--warning)_8%,var(--surface))] px-4 py-2.5 text-sm">
           <span className="text-[var(--warning)]">Corrections saved — this preview shows them live, but the downloadable file still needs a rebuild.</span>
@@ -305,7 +277,7 @@ export function EditorWorkspace({
         </div>}
         <div className="grid min-w-0 gap-4 xl:grid-cols-2">
           {sourceMimeType !== "text/plain" ? <DocumentPreview url={`/api/v1/projects/${project.id}/source`} mimeType={sourceMimeType} title="Original document" /> : <Card className="p-5"><h3 className="font-bold">Original text</h3><div dir={project.direction === "ar-en" ? "rtl" : "ltr"} className="mt-4 max-h-[65vh] space-y-3 overflow-auto whitespace-pre-wrap">{segments.map((segment) => <p key={segment.id}>{segment.sourceText}</p>)}</div></Card>}
-          {artifact ? <DocumentPreview key={artifact.id} url={`/api/v1/exports/${artifact.id}/download?inline=1`} mimeType={artifact.format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"} title="Translated document — click any text to correct it" overlays={previewOverlays} onOverlayEdit={saveOverlayEdit} overlayDir={project.direction === "en-ar" ? "rtl" : "ltr"} /> : <Card className="flex min-h-64 items-center justify-center p-8 text-center"><p className="max-w-sm text-sm leading-7 text-[var(--muted)]">{exporting ? "Preparing your document preview…" : translationReady ? "Build a preview above to check the exact PDF or editable Word download." : lowConfidence ? "Review the flagged OCR in Text corrections, save it, then translate." : "The translated preview will appear when processing completes."}</p></Card>}
+          {artifact ? <DocumentPreview key={artifact.id} url={`/api/v1/exports/${artifact.id}/download?inline=1`} mimeType={artifact.format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"} title="Translated document" /> : <Card className="flex min-h-64 items-center justify-center p-8 text-center"><p className="max-w-sm text-sm leading-7 text-[var(--muted)]">{exporting ? "Preparing your document preview…" : translationReady ? "Build a preview above to check the exact PDF or editable Word download." : lowConfidence ? "Review the flagged OCR in Text corrections, save it, then translate." : "The translated preview will appear when processing completes."}</p></Card>}
         </div>
         <details className="mt-5"><summary className="min-h-11 cursor-pointer text-sm font-bold">Adjust document letterhead & stamp</summary><BrandingPicker workspaceId={project.workspaceId} value={branding} onChange={(items) => { setBranding(items); setBrandingDirty(true); setArtifact(null); }} sourceHasLetterhead={sourceHasLetterhead} disabled={Boolean(jobActive) || Boolean(exporting)} /><Button className="mt-3" onClick={saveBranding} disabled={!brandingDirty || Boolean(exporting)}>Save document placement</Button></details>
       </>}
