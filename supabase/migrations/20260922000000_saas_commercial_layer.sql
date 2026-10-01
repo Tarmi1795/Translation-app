@@ -200,7 +200,7 @@ begin
     raise exception 'server role required' using errcode = '42501';
   end if;
   update public.workspace_subscriptions set
-    status = case when p_immediate then 'canceled' else status end,
+    status = case when p_immediate then 'canceled' else workspace_subscriptions.status end,
     cancel_at_period_end = true,
     canceled_at = case when p_immediate then now() else canceled_at end,
     updated_at = now()
@@ -308,11 +308,11 @@ create policy statements_select_member on public.billing_statements for select t
 alter table public.sales enable row level security;
 alter table public.sales force row level security;
 create policy sales_select_member on public.sales for select to authenticated using ((select private.has_workspace_role(workspace_id, null)));
-create policy sales_insert_admin on public.sales for insert to authenticated with check ((select private.has_workspace_role(workspace_id, array['owner','admin'])));
-create policy sales_update_admin on public.sales for update to authenticated using ((select private.has_workspace_role(workspace_id, array['owner','admin']))) with check ((select private.has_workspace_role(workspace_id, array['owner','admin'])));
-create policy sales_delete_admin on public.sales for delete to authenticated using ((select private.has_workspace_role(workspace_id, array['owner','admin'])));
+create policy sales_insert_admin on public.sales for insert to authenticated with check ((select private.has_workspace_role(workspace_id, array['owner','admin']::public.workspace_role[])));
+create policy sales_update_admin on public.sales for update to authenticated using ((select private.has_workspace_role(workspace_id, array['owner','admin']::public.workspace_role[]))) with check ((select private.has_workspace_role(workspace_id, array['owner','admin']::public.workspace_role[])));
+create policy sales_delete_admin on public.sales for delete to authenticated using ((select private.has_workspace_role(workspace_id, array['owner','admin']::public.workspace_role[])));
 
 alter table public.sale_payments enable row level security;
 alter table public.sale_payments force row level security;
 create policy sale_payments_select_member on public.sale_payments for select to authenticated using ((select private.has_workspace_role(workspace_id, null)));
-create policy sale_payments_insert_admin on public.sale_payments for insert to authenticated with check ((select private.has_workspace_role(workspace_id, array['owner','admin'])));
+create policy sale_payments_insert_admin on public.sale_payments for insert to authenticated with check ((select private.has_workspace_role(workspace_id, array['owner','admin']::public.workspace_role[])));
