@@ -17,8 +17,17 @@ async function loadArabicFont() {
   fontCache = new Uint8Array(await readFile(path.join(process.cwd(), "public/fonts/NotoSansArabic.ttf")));
   return fontCache;
 }
-function visualRtl(text: string) {
-  const shaped = ArabicShaper.convertArabic(text);
+// Hyphen/slash/dot/space-separated identifiers ("17-3104-07", "+974 3115 1965",
+// "QID: 27760809031") must stay one left-to-right unit inside an Arabic line:
+// plain Unicode bidi reorders their groups ("07-3104-17"), which transcribes
+// wrong. Flanking each multi-group token with LRM makes bidi treat it as a
+// single LTR run; the marks themselves have no glyph and draw as zero-width.
+const MULTI_GROUP_TOKEN = /[+-]?[A-Za-z0-9]+(?:[\s./\-:]+[A-Za-z0-9]+)+/g;
+function keepLtrUnits(text: string) {
+  return text.replace(MULTI_GROUP_TOKEN, (token) => `\u200E${token}\u200E`);
+}
+export function visualRtl(text: string) {
+  const shaped = ArabicShaper.convertArabic(keepLtrUnits(text));
   const bidi = bidiFactory();
   const reordered = bidi.getReorderedString(shaped, bidi.getEmbeddingLevels(shaped, "rtl"));
   // Bidi reordering places a combining mark before its base letter in visual
@@ -57,7 +66,9 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
   const unsupported = /[\u0000-\u001F\u007F\u200B-\u200F\u2028\u2029]/g;
   const visual = (text: string) => {
     const cleaned = text.replace(unsupported, " ");
-    return rtl ? visualRtl(cleaned) : cleaned;
+    // The LRM sentinels inserted by visualRtl steer bidi and are then removed:
+    // they have no glyph and must not affect measurement or drawing.
+    return rtl ? visualRtl(cleaned).replace(/[\u200E\u200F]/g, "") : cleaned;
   };
   const measure = (text: string, size: number) => {
     try { return font.widthOfTextAtSize(visual(text), size); }
@@ -69,22 +80,26 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
 
   const drawLine = (page: PDFPage, text: string, x: number, top: number, width: number, size: number, alignment?: string) => {
     const line = visual(text);
-    let textWidth: number;
-    try { textWidth = font.widthOfTextAtSize(line, size); }
-    catch { textWidth = Array.from(line).length * size * 0.6; }
+    // @pdf-lib/fontkit's shaper reverses any run whose script is RTL, which
+    // would re-visualise our already-visual string (backwards Arabic, mirrored
+    // digit runs). Drawing character by character pins the glyph order to the
+    // stored visual sequence; joining is encoded in the pre-shaped presentation
+    // forms, so isolated draws stay cursive.
+    const characters = Array.from(line);
+    const widths = characters.map((character) => {
+      try { return font.widthOfTextAtSize(character, size); }
+      catch { return size * 0.6; }
+    });
+    const textWidth = widths.reduce((sum, advance) => sum + advance, 0);
     const align = alignment === "center" ? (width - textWidth) / 2 : rtl || alignment === "end" ? width - textWidth : 0;
-    const at = { x: x + Math.max(0, align), y: page.getHeight() - top - size, size, font, color: rgb(0.08, 0.1, 0.14) };
-    try { page.drawText(line, at); }
-    catch {
+    const at = { y: page.getHeight() - top - size, size, font, color: rgb(0.08, 0.1, 0.14) };
+    let cursor = x + Math.max(0, align);
+    for (let index = 0; index < characters.length; index += 1) {
       // A glyph outside the embedded font must not fail the whole export:
-      // draw character by character and skip the few unsupported ones.
-      let cursor = at.x;
-      for (const character of Array.from(line)) {
-        const charWidth = font.widthOfTextAtSize(character, size);
-        try { page.drawText(character, { ...at, x: cursor }); }
-        catch { /* Skip the unrenderable glyph; the surrounding line stays. */ }
-        cursor += charWidth;
-      }
+      // skip the unrenderable ones; the surrounding line stays.
+      try { page.drawText(characters[index], { ...at, x: cursor }); }
+      catch { /* Skip the unrenderable glyph. */ }
+      cursor += widths[index];
     }
   };
 
@@ -108,16 +123,34 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
       }
       page.drawRectangle({ x: b.x, y: page.getHeight() - b.y - b.height, width: b.width, height: b.height, color: rgb(1,1,1) });
     }
+    const allBounds = document.nodes
+      .filter((node) => node.sourceText.trim() && node.bounds && !deferred.includes(node))
+      .map((node) => node.bounds!)
+      .filter((b) => [b.x, b.y, b.width, b.height].every(Number.isFinite) && b.width > 0 && b.height > 0);
     for (const node of document.nodes.filter((node) => node.sourceText.trim() && !deferred.includes(node))) {
       const b = node.bounds!;
+      const page = pdf.getPage(b.page - 1);
+      // Arabic runs longer than the English source; let the fitted text grow
+      // into the whitespace above the next block instead of dropping to 9pt or
+      // deferring. The white-out rectangle itself stays at the true bounds.
+      let fitHeight = b.height;
+      if (node.type !== "table_cell") {
+        const pageBottom = page.getHeight() - 24;
+        const growthLimit = Math.min(b.y + b.height + Math.max(28, b.height * 1.5), pageBottom);
+        const nextTop = Math.min(
+          growthLimit,
+          ...allBounds
+            .filter((other) => other.page === b.page && other !== b && other.y >= b.y + b.height - 1 && other.x < b.x + b.width && other.x + other.width > b.x)
+            .map((other) => other.y - 2),
+        );
+        fitHeight = Math.max(b.height, nextTop - b.y);
+      }
       // Never enlarge into neighbouring cells or reduce below 9pt.
-      const fitted = fitText(node.translatedText!, b.width, b.height, node.style?.fontSize ?? 11, measure);
+      const fitted = fitText(node.translatedText!, b.width, fitHeight, node.style?.fontSize ?? 11, measure);
       const collision = placed.some((box) => box.page === b.page && intersects(box, b));
       if (!fitted || collision) {
         deferred.push(node);
         movedByPage.set(b.page, (movedByPage.get(b.page) ?? 0) + 1);
-        const reference = `[${node.order + 1}]`;
-        if (b.width >= measure(reference, 9) && b.height >= 12) drawLine(pdf.getPage(b.page - 1), reference, b.x, b.y, b.width, 9);
         continue;
       }
       placed.push(b);
@@ -126,7 +159,7 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
     }
     if (noPosition.length) warnings.push({ code: "material_reflow", page: 1, severity: "warning", message: `${noPosition.length} segment${noPosition.length === 1 ? "" : "s"} (numbers ${noPosition.slice(0, 8).join(", ")}${noPosition.length > 8 ? "…" : ""}) had no usable position — their translations are on continuation pages.` });
     for (const [page, count] of [...movedByPage.entries()].sort((a, b) => a[0] - b[0])) {
-      warnings.push({ code: "overflow", page, severity: "warning", message: `${count} segment${count === 1 ? "" : "s"} on page ${page} did not fit legibly (marked [n] in place). Full translations are on the continuation pages.` });
+      warnings.push({ code: "overflow", page, severity: "warning", message: `${count} segment${count === 1 ? "" : "s"} on page ${page} did not fit legibly beside the original layout; their full translations follow on the continuation pages.` });
     }
     if (reduced.length) warnings.push({ code: "material_reflow", page: 1, severity: "info", message: `${reduced.length} segment${reduced.length === 1 ? " was" : "s were"} reduced in size to fit (smallest ${smallestReduced.toFixed(1)} pt).` });
     warnings.push({ code: "font_substitution", page: 1, severity: "info", message: "Translated text uses an embedded Arabic-capable font; check coloured backgrounds and table rules in the PDF." });
@@ -150,11 +183,12 @@ export async function renderPdf(document: CanonicalDocument, direction: Language
     if (top > defaultSize.height * 0.55) throw new Error("Letterhead leaves too little space for readable text. Reduce its size or move it.");
   }
   for (const node of deferred) {
-    if (!flowPage || (!preservesSource && node.page !== sourcePage)) { addFlowPage(); sourcePage = node.page; }
-    if (preservesSource) {
-      if (top + 35 > defaultSize.height - margin) addFlowPage();
-      drawLine(flowPage!, `Page ${node.page} / Segment ${node.order + 1}`, margin, top, defaultSize.width - margin * 2, 9, "start");
-      top += 18;
+    const newSourcePage = preservesSource && node.page !== sourcePage;
+    if (!flowPage || newSourcePage || (!preservesSource && node.page !== sourcePage)) { addFlowPage(); sourcePage = node.page; }
+    if (newSourcePage) {
+      if (top + 30 > defaultSize.height - margin) addFlowPage();
+      drawLine(flowPage!, rtl ? `تتمة الترجمة — الصفحة ${node.page}` : `Continued translations — page ${node.page}`, margin, top, defaultSize.width - margin * 2, 11);
+      top += 24;
     }
     const size = Math.min(24, Math.max(10, node.style?.fontSize ?? (node.type === "heading" ? 16 : 11)));
     const lineHeight = size * 1.5;

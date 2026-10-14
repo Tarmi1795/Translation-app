@@ -5,7 +5,7 @@ import { countDocumentWords } from "@/lib/words";
 // fails. Bundlers emit this as a regular module dependency.
 import "pdfjs-dist/legacy/build/pdf.worker.mjs";
 
-interface PdfTextItem { str: string; transform: number[]; width: number; height: number }
+interface PdfTextItem { str: string; transform: number[]; width: number; height: number; fontSize: number }
 
 interface LineBox { x: number; top: number; width: number; height: number; text: string }
 
@@ -21,7 +21,9 @@ function mergeLinesIntoBlocks(lineBoxes: LineBox[]): Array<{ x: number; top: num
     const overlap = previous ? Math.min(previous.x + previous.width, line.x + line.width) - Math.max(previous.x, line.x) : 0;
     const canMerge = previous
       && verticalGap >= -line.height * 0.35
-      && verticalGap <= line.height * 0.95
+      // Only lines spaced like running text (leading ≲1.5em) belong to one
+      // paragraph; anything looser is a new block, even at the same indent.
+      && verticalGap <= line.height * 0.45
       && overlap > Math.min(previous.width, line.width) * 0.35
       // A size change marks a heading or caption boundary; keep those separate.
       && previous.fontSize / line.height <= 1.15
@@ -69,12 +71,24 @@ export async function extractDigitalPdf(bytes: Uint8Array, title: string, direct
       .map((item) => {
         const textItem = item as { str: string; transform: number[]; width: number; height: number };
         const transform = pdfjs.Util.transform(viewport.transform, textItem.transform);
-        return { str: textItem.str, transform, width: textItem.width, height: textItem.height };
+        // pdfjs reports height from the font bounding box, which some embedded
+        // CID fonts inflate to ~2x the visual glyph size; inflated heights then
+        // swallow neighbouring lines into one block. The text matrix scale is
+        // the honest point size, so prefer it and clamp against the bbox.
+        const matrixSize = Math.abs(textItem.transform[3]) || Math.abs(textItem.transform[0]);
+        const bboxSize = textItem.height > 0 ? textItem.height : matrixSize;
+        const fontSize = Math.min(matrixSize > 0 ? matrixSize : bboxSize, bboxSize) || bboxSize;
+        return { str: textItem.str, transform, width: textItem.width, height: textItem.height, fontSize: Math.max(4, Math.min(400, fontSize)) };
       });
+    // Cluster items into lines by baseline proximity instead of a fixed grid:
+    // sub-point and multi-point baseline wobble must join, headings must not.
+    const byBaseline = [...items].sort((a, b) => a.transform[5] - b.transform[5]);
     const lines = new Map<number, PdfTextItem[]>();
-    for (const item of items) {
-      const y = Math.round(item.transform[5] / 4) * 4;
-      lines.set(y, [...(lines.get(y) ?? []), item]);
+    let bucket = Number.NaN;
+    for (const item of byBaseline) {
+      const y = item.transform[5];
+      if (!Number.isFinite(bucket) || Math.abs(y - bucket) > Math.max(2, item.fontSize * 0.25)) bucket = y;
+      lines.set(bucket, [...(lines.get(bucket) ?? []), item]);
     }
     const sortedLines = [...lines.entries()].sort((a, b) => a[0] - b[0]);
     const lineBoxes: LineBox[] = [];
@@ -86,17 +100,28 @@ export async function extractDigitalPdf(bytes: Uint8Array, title: string, direct
       for (const item of sorted) {
         const group = groups.at(-1);
         const previous = group?.at(-1);
-        if (!previous || item.transform[4] - (previous.transform[4] + previous.width) > Math.max(14, item.height * 1.5)) groups.push([item]);
+        if (!previous || item.transform[4] - (previous.transform[4] + previous.width) > Math.max(8, item.fontSize * 0.8)) groups.push([item]);
         else group!.push(item);
       }
       for (const group of groups) {
         const readingOrder = direction === "ar-en" ? [...group].reverse() : group;
-        const text = readingOrder.map((item) => item.str).join(" ").replace(/\s+/g, " ").trim();
+        // Some producers (including this app's own renderer) emit one text
+        // operator per character; join adjacent runs without inserting a word
+        // space when they sit kerning-tight, so words are not letter-spaced.
+        let text = "";
+        for (const [index, item] of readingOrder.entries()) {
+          const previous = readingOrder[index - 1];
+          const gap = previous ? item.transform[4] - (previous.transform[4] + previous.width) : Infinity;
+          text += index === 0 || /\s$/.test(text) || /^\s/.test(item.str) ? item.str : gap > Math.max(1.5, item.fontSize * 0.2) ? ` ${item.str}` : item.str;
+        }
+        text = text.replace(/\s+/g, " ").trim();
         if (!text) continue;
         const minX = Math.min(...group.map((item) => item.transform[4]));
         const maxX = Math.max(...group.map((item) => item.transform[4] + item.width));
-        const height = Math.max(...group.map((item) => item.height || Math.abs(item.transform[3])));
-        lineBoxes.push({ x: minX, top: Math.max(0, y - height), width: maxX - minX, height: height * 1.2, text });
+        const size = Math.max(...group.map((item) => item.fontSize));
+        // Cover the ascender above and the descender below the baseline, and
+        // no more: oversized boxes erase neighbouring content when white-out.
+        lineBoxes.push({ x: minX, top: Math.max(0, y - size * 0.85), width: maxX - minX, height: size * 1.1, text });
       }
     }
     for (const block of mergeLinesIntoBlocks(lineBoxes)) {

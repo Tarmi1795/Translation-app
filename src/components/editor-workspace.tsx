@@ -39,7 +39,6 @@ export function EditorWorkspace({
   role,
   versionId,
   sourceMimeType,
-  segmentLayouts = {},
   branding: initialBranding,
   sourceHasLetterhead,
 }: {

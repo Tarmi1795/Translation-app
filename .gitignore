@@ -19,3 +19,6 @@ tmp-test/
 
 .vercel
 .env*
+
+# ZCode session artifacts
+.zcode/

@@ -24,6 +24,39 @@ function normalizedNumbers(text: string) {
   return numeric.sort();
 }
 
+// Translation models occasionally return Arabic with embedded digit/Latin runs
+// in visual order, mirroring identifiers on the page (QID 27760809031 → DIQ
+// 13090806772, "23" → "32"). Anchored on the source segment, flip any run that
+// appears exactly reversed while the correct form is absent. Longer tokens
+// first so "17-3104-07" is repaired before its inner groups can match.
+const LTR_TOKEN = /[A-Za-z0-9][A-Za-z0-9+/.:_-]{1,}/g;
+
+function reversedVariants(token: string) {
+  const chars = Array.from(token);
+  const variants = [chars.slice().reverse().join("")];
+  // Dashed codes are often reversed group by group (17-3104-07 → 71-4013-70).
+  if (/[-/.:]/.test(token)) {
+    const groups = token.split(/([-/.:])/);
+    variants.push(groups.map((part) => /[-/.:]/.test(part) ? part : Array.from(part).reverse().join("")).join(""));
+  }
+  return [...new Set(variants.filter((variant) => variant !== token))];
+}
+
+export function repairReversedRuns(source: string, translated: string) {
+  if (!/[\u0600-\u06FF]/.test(translated)) return translated;
+  const tokens = [...new Set(source.match(LTR_TOKEN) ?? [])]
+    .filter((token) => (token.length >= 2 && /\d/.test(token)) || token.length >= 3)
+    .sort((a, b) => b.length - a.length);
+  let repaired = translated;
+  for (const token of tokens) {
+    if (repaired.includes(token)) continue;
+    for (const variant of reversedVariants(token)) {
+      if (repaired.includes(variant)) repaired = repaired.split(variant).join(token);
+    }
+  }
+  return repaired;
+}
+
 export function validateTranslation(source: string, translated: string) {
   const flags: string[] = [];
   if (!translated.trim()) flags.push("missing_translation");
@@ -39,7 +72,7 @@ export function validateTranslation(source: string, translated: string) {
     return false;
   });
   if (dropped.length) flags.push("number_mismatch");
-  const sourceCodes = source.match(/\b[A-Z]{2,}-?\d+[A-Z0-9-]*\b/g) ?? [];
+  const sourceCodes = source.match(/\b[A-Za-z]+\d[A-Za-z0-9-]*\b|\b\d+[A-Za-z][A-Za-z0-9-]*\b|\b[A-Z]{2,}-?\d+[A-Z0-9-]*\b/g) ?? [];
   if (sourceCodes.some((code) => !translated.includes(code))) flags.push("identifier_mismatch");
   if (translated.length > source.length * 2.1 && source.length > 40) flags.push("possible_overflow");
   return flags;

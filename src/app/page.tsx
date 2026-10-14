@@ -4,6 +4,7 @@ import { hasSupabaseEnv } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function HomePage() {
+  let authenticatedName: string | null = null;
   if (hasSupabaseEnv()) {
     try {
       const user = await getCurrentUser();
@@ -13,12 +14,11 @@ export default async function HomePage() {
         // reads as an accidental logout.
         const supabase = await createClient();
         const { data: profile } = await supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle();
-        const name = profile?.display_name || user.email?.split("@")[0] || null;
-        return <LandingPage authenticated userName={name} />;
+        authenticatedName = profile?.display_name || user.email?.split("@")[0] || null;
       }
     } catch {
       // A transient auth failure renders the public landing page.
     }
   }
-  return <LandingPage />;
+  return authenticatedName !== null ? <LandingPage authenticated userName={authenticatedName} /> : <LandingPage />;
 }

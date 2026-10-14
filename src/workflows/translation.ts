@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { getTranslationProvider } from "@/lib/openai/responses-provider";
 import { countSourceWords } from "@/lib/words";
-import { layoutWarningsForSegments, validateTranslation } from "@/lib/quality";
+import { layoutWarningsForSegments, repairReversedRuns, validateTranslation } from "@/lib/quality";
 import type { CanonicalDocument, LanguageDirection } from "@/types/domain";
 import type { TranslationContext, TranslationInputSegment } from "@/lib/openai/provider";
 
@@ -64,8 +64,11 @@ async function translateBatchStep(jobId: string, direction: LanguageDirection, b
   // one round trip each.
   await Promise.all(translated.map(async (result) => {
     const source = batch.find((segment) => segment.id === result.id)?.sourceText ?? "";
-    const flags = validateTranslation(source, result.translatedText);
-    const { error } = await admin.from("segments").update({ translated_text: result.translatedText, status: "translated", quality_flags: flags }).eq("id", result.id);
+    // Models sometimes emit visual-order digits/Latin inside Arabic; heal it
+    // before persisting so every downstream surface (editor, PDF, DOCX) is right.
+    const healed = repairReversedRuns(source, result.translatedText);
+    const flags = validateTranslation(source, healed);
+    const { error } = await admin.from("segments").update({ translated_text: healed, status: "translated", quality_flags: flags }).eq("id", result.id);
     if (error) throw error;
   }));
   return { completed: translated.length, successfulWords: batch.reduce((sum, segment) => sum + countSourceWords(segment.sourceText), 0) };

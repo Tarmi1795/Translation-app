@@ -4,6 +4,7 @@ import { ApiError, requireWorkspaceRole } from "@/lib/auth";
 import { createDocxExport, renderPdf, createTextExport } from "@/lib/exports";
 import { DOCX_MIME } from "@/lib/documents/docx";
 import { loadRenderBranding } from "@/lib/documents/branding-render";
+import { repairReversedRuns } from "@/lib/quality";
 import { apiData, apiError } from "@/lib/http";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 
@@ -28,7 +29,9 @@ export async function POST(request: Request) {
     const canonical = structuredClone(version.canonical_tree) as CanonicalDocument;
     canonical.nodes = canonical.nodes.map((node) => {
       const segment = segmentByNode.get(node.id);
-      return segment ? { ...node, sourceText: segment.source_text, translatedText: segment.translated_text ?? node.translatedText } : node;
+      // Heal legacy segments whose provider output had mirrored digit/Latin
+      // runs, so existing projects export correctly without re-translation.
+      return segment ? { ...node, sourceText: segment.source_text, translatedText: repairReversedRuns(segment.source_text, segment.translated_text ?? node.translatedText ?? "") || node.translatedText } : node;
     });
     if (canonical.nodes.some((node) => node.sourceText.trim() && !node.translatedText?.trim())) throw new ApiError(409, "Complete all translations before creating the preview or download.", "export_not_ready");
     const { data: exportRow, error: createError } = await supabase.from("exports").insert({ workspace_id: input.workspaceId, project_id: project.id, version_id: version.id, requested_by: user.id, format: input.format, status: "processing" }).select("id").single();

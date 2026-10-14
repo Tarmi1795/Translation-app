@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import JSZip from "jszip";
-import { assertCompleteTranslation, createDocxExport, renderPdf } from "@/lib/exports";
+import { assertCompleteTranslation, createDocxExport, renderPdf, visualRtl } from "@/lib/exports";
 import { extractDigitalPdf } from "@/lib/documents/pdf";
 import type { CanonicalDocument } from "@/types/domain";
 
@@ -21,8 +21,36 @@ describe("document exports", () => {
     expect(output.getPage(0).getWidth()).toBe(400);
     expect(output.getPageCount()).toBeGreaterThan(1);
     expect(result.warnings.some((item) => item.code === "overflow")).toBe(true);
-    const extracted = await extractDigitalPdf(new Uint8Array(result.bytes), "output.pdf", "ar-en");
+    const extracted = await extractDigitalPdf(new Uint8Array(result.bytes), "output.pdf", "en-ar");
     expect(extracted?.nodes.map((node) => node.sourceText).join(" ")).toContain("END-739");
+    // Continuation pages carry a clean localized heading, never segment markers.
+    const text = extracted?.nodes.map((node) => node.sourceText).join(" ") ?? "";
+    expect(text).toContain("Continued translations");
+    expect(text).not.toMatch(/\[\d+\]/);
+  });
+
+  it("renders Arabic translations with digits and Latin codes intact", async () => {
+    // pdfjs extraction reorders RTL items, so digit order is asserted at the
+    // stored-string level (visualRtl) and only rendering presence end-to-end.
+    const visual = visualRtl("التاريخ: 23 سبتمبر 2026");
+    expect(visual.includes("23")).toBe(true);
+    expect(visual.includes("2026")).toBe(true);
+    expect(visual.includes("32")).toBe(false);
+    expect(visual.includes("6202")).toBe(false);
+    const source = await PDFDocument.create();
+    const page = source.addPage([500, 400]);
+    const helvetica = await source.embedFont(StandardFonts.Helvetica);
+    page.drawText("Date: September 23, 2026", { x: 40, y: 360, size: 12, font: helvetica });
+    const doc: CanonicalDocument = {
+      version: 1, title: "digits", mimeType: "application/pdf", direction: "en-ar", pageCount: 1,
+      pages: [{ width: 500, height: 400 }], sourceWordCount: 4, warnings: [],
+      nodes: [{ id: "date", type: "paragraph", sourceText: "Date: September 23, 2026", translatedText: "التاريخ: 23 سبتمبر 2026", page: 1, order: 0, bounds: { page: 1, x: 40, y: 24, width: 220, height: 16 }, style: { fontSize: 12 } }],
+    };
+    const result = await renderPdf(doc, "en-ar", await source.save());
+    const extracted = await extractDigitalPdf(new Uint8Array(result.bytes), "digits.pdf", "en-ar");
+    const text = extracted?.nodes.map((node) => node.sourceText).join(" ") ?? "";
+    expect(/[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text)).toBe(true);
+    expect(text).not.toMatch(/\[\d+\]/);
   });
   it("exports editable Word from PDF input instead of rejecting it", async () => {
     const bytes = await createDocxExport(canonical);
